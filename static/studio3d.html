@@ -114,7 +114,7 @@ new GLTFLoader().load("/static/assets3d/mark.glb", g => {
   const box = new THREE.Box3().setFromObject(g.scene);
   const c = box.getCenter(new THREE.Vector3());
   group.position.set(-c.x, -c.y, -c.z);           // 머리를 원점으로
-  camera.position.set(0, 2, 42);
+  camera.position.set(0, 1.5, 80);
   camera.lookAt(0, 0, 0);
   setStatus("");
 }, undefined, e => setStatus("모델 로드 실패: " + e, true));
@@ -140,7 +140,7 @@ addEventListener("pointermove", e => {
 // ---------- 상태 (퍼펫과 동일 구조) ----------
 let anim = null, smooth = {};
 const W = k => smooth[k] || 0;
-let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
+let nod = 0;
 let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
 $("blinkBtn").onclick = () => blinkUntil = performance.now() + 150;
 function blinkValue(now) {
@@ -198,20 +198,9 @@ function render(now) {
     inf[dict[name]] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
   }
 
-  // 머리 움직임: 끄덕임 + 표류 + 사용자 드래그
+  // 머리 고정: 사용자 드래그 + 발화 중 미세 끄덕임만 (대기 중 완전 정지)
   nod = 0.85 * nod + 0.15 * W("jawopen");
-  if (now > wanderNext) {
-    wanderNext = now + 2200 + Math.random() * 2500;
-    wanderGoalR = (Math.random() - 0.5) * 0.06;
-    wanderGoalY = (Math.random() - 0.5) * 0.08;
-  }
-  wanderR += (wanderGoalR - wanderR) * 0.02;
-  wanderY += (wanderGoalY - wanderY) * 0.02;
-  const t = now / 1000;
-  group.rotation.set(
-    userPitch + nod * 0.06 + Math.sin(t * 1.1) * 0.01,
-    userYaw + wanderY,
-    wanderR * 0.5 + Math.sin(t * 0.7) * 0.008);
+  group.rotation.set(userPitch + nod * 0.04, userYaw, 0);
 
   renderer.render(scene, camera);
 }
