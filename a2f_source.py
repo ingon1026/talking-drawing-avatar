@@ -9,13 +9,14 @@ ARKIT_NAMES(PascalCase)와 정확히 같은 이름 체계가 된다.
 
     audio_to_blendshapes(wav_path) -> {"fps": float, "names": list[str], "frames": list[list[float]]}
 
-호출당 프로세스를 새로 띄운다(TensorRT 엔진 로드 포함 콜드스타트). 지연은 모듈 하단
-self-check 로 측정/출력한다.
+exporter 를 `--serve` 로 1회만 띄워 TensorRT 엔진을 상주시키고(모듈 싱글턴), 호출마다
+stdin 으로 요청 한 줄을 보내 웜 추론한다. 첫 호출만 엔진 로드(콜드), 이후는 웜.
 """
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from glob import glob
 from pathlib import Path
@@ -51,6 +52,86 @@ def _runtime_env() -> dict:
     env = dict(os.environ)
     env["LD_LIBRARY_PATH"] = ":".join(parts + [env.get("LD_LIBRARY_PATH", "")]).rstrip(":")
     return env
+
+
+# --- 상주 exporter 프로세스 (모듈 싱글턴) ---
+# exporter 를 `--serve` 로 1회 띄워 TRT 엔진을 상주시키고, 요청마다 stdin 으로
+# "<wav16>\t<out_txt>" 한 줄을 보내 stdout 의 "DONE"/"ERR" 를 대기한다. 프로세스가
+# 죽으면 1회 재기동 후 재시도한다. (부모가 죽으면 stdin EOF 로 exporter 도 종료돼 VRAM 반환.)
+_PROC: subprocess.Popen | None = None
+_LOCK = threading.Lock()  # app.py 워커는 1개지만 상주 프로세스 접근을 직렬화
+
+
+class _ServerDied(Exception):
+    pass
+
+
+def _spawn_server() -> subprocess.Popen:
+    """--serve exporter 를 띄우고 READY 를 받을 때까지 대기해 Popen 을 반환."""
+    proc = subprocess.Popen(
+        [str(EXPORTER), str(MODEL_JSON), "--serve", str(int(FPS))],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=None,  # 부모 stderr 로 상속 — PIPE 로 잡으면 안 비워 데드락 위험
+        env=_runtime_env(), text=True, bufsize=1,
+    )
+    # TRT 로드 중 stdout 로 새어나오는 잡음은 건너뛰고 READY 만 기다린다.
+    while True:
+        line = proc.stdout.readline()
+        if line == "":  # READY 이전 EOF → 기동 실패
+            proc.wait()
+            raise RuntimeError(f"a2f exporter 기동 실패 (code={proc.returncode})")
+        if line.rstrip("\n") == "READY":
+            return proc
+
+
+def _kill_server() -> None:
+    global _PROC
+    if _PROC is not None:
+        try:
+            _PROC.stdin.close()
+        except Exception:
+            pass
+        try:
+            _PROC.terminate()
+            _PROC.wait(timeout=5)
+        except Exception:
+            _PROC.kill()
+        _PROC = None
+
+
+def _ensure_server() -> subprocess.Popen:
+    global _PROC
+    if _PROC is None or _PROC.poll() is not None:
+        _PROC = _spawn_server()
+    return _PROC
+
+
+def _run_on_server(wav16: str, out_txt: str) -> None:
+    """상주 exporter 에 (wav16 → out_txt) 요청. 죽어 있으면 1회 재기동 후 재시도.
+
+    ERR 응답(입력 오류 등)은 재시도하지 않고 즉시 예외. EOF/BrokenPipe(프로세스 사망)만 재기동.
+    """
+    with _LOCK:
+        last_err = None
+        for attempt in range(2):
+            proc = _ensure_server()
+            try:
+                proc.stdin.write(f"{wav16}\t{out_txt}\n")
+                proc.stdin.flush()
+                while True:
+                    line = proc.stdout.readline()
+                    if line == "":  # EOF → 프로세스 사망
+                        raise _ServerDied()
+                    line = line.rstrip("\n")
+                    if line.startswith("DONE "):
+                        return
+                    if line.startswith("ERR "):
+                        raise RuntimeError(f"a2f exporter 오류: {line[4:]}")
+                    # 그 밖의 라인(스타트업/TRT 잡음)은 무시
+            except (BrokenPipeError, _ServerDied) as e:
+                last_err = e
+                _kill_server()  # 다음 루프에서 재기동 후 재시도
+        raise RuntimeError(f"a2f 상주 프로세스 재기동 후에도 응답 없음: {last_err}")
 
 
 def _to_pascal(name: str) -> str:
@@ -101,10 +182,7 @@ def audio_to_blendshapes(wav_path: str) -> dict:
         wav16 = os.path.join(td, "in16k.wav")
         out_txt = os.path.join(td, "bs.txt")
         _resample_16k_mono(wav_path, wav16)
-        subprocess.run(
-            [str(EXPORTER), str(MODEL_JSON), wav16, out_txt, str(int(FPS))],
-            check=True, env=_runtime_env(),
-        )
+        _run_on_server(wav16, out_txt)  # 상주 프로세스: TRT 엔진 재사용(웜 추론)
         fps, sdk_names, arr = _parse_export(out_txt)
 
     # SDK camelCase pose 이름 → PascalCase, ARKIT_NAMES(52) 순서로 재배열/선택.
