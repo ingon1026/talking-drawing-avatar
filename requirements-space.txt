@@ -1,0 +1,11 @@
+# HF Spaces (Docker, CPU) 전용 — 퍼펫 모드 + NeuroSync CPU 추론
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+numpy==1.26.4
+librosa==0.10.2.post1
+scipy==1.13.1
+pillow==10.3.0
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+edge-tts==7.2.8
+huggingface_hub==0.24.6

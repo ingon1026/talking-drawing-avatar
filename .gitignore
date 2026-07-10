@@ -1,0 +1,14 @@
+# 대용량/로컬 전용 (Space·GitHub 제외)
+.venv/
+JoyVASA/
+Audio2Face-3D-SDK/
+NeuroSync/
+neurosync_infer/model.pth
+output/
+uploads/
+__pycache__/
+*.pyc
+
+# 로그·잡동사니
+*.log
+*Zone.Identifier

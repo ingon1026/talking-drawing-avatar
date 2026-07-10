@@ -1,0 +1,12 @@
+.venv
+JoyVASA
+Audio2Face-3D-SDK
+NeuroSync
+neurosync_infer/model.pth
+output
+uploads
+__pycache__
+*.pyc
+*.log
+*Zone.Identifier
+.git
