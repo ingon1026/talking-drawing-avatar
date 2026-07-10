@@ -71,6 +71,7 @@
     <label><span class="k">입 벌림</span><input id="ovJaw" type="range" min="0" max="1" step="0.01" value="0"></label>
     <label><span class="k">미소</span><input id="ovSmile" type="range" min="0" max="1" step="0.01" value="0"></label>
     <label><span class="k">눈썹</span><input id="ovBrow" type="range" min="0" max="1" step="0.01" value="0"></label>
+    <label><span class="k">시선 좌우</span><input id="ovGaze" type="range" min="-1" max="1" step="0.01" value="0"></label>
   </div>
 
   <div id="status">3D 모델 로딩 중… (41MB, 최초 1회)</div>
@@ -104,7 +105,21 @@ const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -
 
 const group = new THREE.Group();
 scene.add(group);
-let mesh = null, dict = {};
+let mesh = null, dict = {}, eyes = [];
+
+function makeEye(cx) {
+  const eg = new THREE.Group();
+  eg.position.set(cx, 159.75, 3.35);  // eyeBlink 델타 중심에서 계산한 소켓 좌표
+  const mat = (color, roughness) => new THREE.MeshStandardMaterial({ color, roughness });
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.15, 32, 16), mat(0xf2f0ee, 0.35));
+  const iris = new THREE.Mesh(new THREE.SphereGeometry(0.46, 24, 12), mat(0x44546e, 0.3));
+  iris.position.z = 0.78;
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 8), mat(0x0c0c0c, 0.4));
+  pupil.position.z = 1.0;
+  eg.add(sclera, iris, pupil);
+  group.add(eg);
+  return eg;
+}
 
 new GLTFLoader().load("/static/assets3d/mark.glb", g => {
   mesh = g.scene.getObjectByProperty("type", "Mesh") || g.scene.children[0];
@@ -114,6 +129,7 @@ new GLTFLoader().load("/static/assets3d/mark.glb", g => {
   const box = new THREE.Box3().setFromObject(g.scene);
   const c = box.getCenter(new THREE.Vector3());
   group.position.set(-c.x, -c.y, -c.z);           // 머리를 원점으로
+  eyes = [makeEye(3.41), makeEye(-3.5)];
   camera.position.set(0, 1.5, 80);
   camera.lookAt(0, 0, 0);
   setStatus("");
@@ -197,6 +213,12 @@ function render(now) {
     const k = norm(name);
     inf[dict[name]] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
   }
+
+  // 시선: 슬라이더 우선, 없으면 eyeLook 채널
+  const gx = +$("ovGaze").value ||
+    (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
+  const gy = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
+  for (const e of eyes) e.rotation.set(gy * 0.3, gx * 0.4, 0);
 
   // 머리 고정: 사용자 드래그 + 발화 중 미세 끄덕임만 (대기 중 완전 정지)
   nod = 0.85 * nod + 0.15 * W("jawopen");
