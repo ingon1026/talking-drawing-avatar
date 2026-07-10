@@ -1,0 +1,22 @@
+{
+  "name": "기본 캐릭터",
+  "size": [
+    512,
+    512
+  ],
+  "pupilRange": 7,
+  "browRange": 10,
+  "jawDrop": 8,
+  "mouthCenter": [
+    256,
+    340
+  ],
+  "proceduralMouth": true,
+  "mouthStyle": {
+    "line": "#3a2e2a",
+    "fill": "#8a3535",
+    "tongue": "#d97b7b",
+    "teeth": "#ffffff",
+    "width": 34
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "돼지",
+  "size": [
+    512,
+    512
+  ],
+  "pupilRange": 0,
+  "browRange": 0,
+  "jawDrop": 6,
+  "mouthCenter": [
+    249,
+    142
+  ],
+  "proceduralMouth": true,
+  "mouthStyle": {
+    "line": "#2b2b2b",
+    "fill": "#c94f6d",
+    "tongue": "#f2a0b5",
+    "teeth": "#ffffff",
+    "width": 26
+  }
+}
