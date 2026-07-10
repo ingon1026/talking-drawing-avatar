@@ -197,11 +197,14 @@ function targetMouth() {
   if (wide > 0.22) return jaw < 0.16 ? "I" : "E";
   return jaw < 0.14 ? "closed" : "E";
 }
-let curMouth = "closed", mouthCand = "closed", candSince = 0;
+let curMouth = "closed", prevMouth = null, switchAt = 0, mouthCand = "closed", candSince = 0;
+const FADE_MS = 90;
 function pickMouth(now) {
   const t = targetMouth();
   if (t !== mouthCand) { mouthCand = t; candSince = now; }
-  if (mouthCand !== curMouth && now - candSince >= 70) curMouth = mouthCand;
+  if (mouthCand !== curMouth && now - candSince >= 70) {
+    prevMouth = curMouth; switchAt = now; curMouth = mouthCand;
+  }
   return curMouth;
 }
 
@@ -276,7 +279,12 @@ function render(now) {
   else { draw("eye_L_open"); draw("eye_R_open"); draw("pupil_L"); draw("pupil_R"); }
   if (manifest.proceduralMouth === false && parts.mouth_closed) {
     const m = pickMouth(now);
-    parts["mouth_" + m] && ctx.drawImage(parts["mouth_" + m], 0, W("jawopen") * (manifest.jawDrop || 8));
+    const dyM = W("jawopen") * (manifest.jawDrop || 8);
+    const f = Math.min(1, (now - switchAt) / FADE_MS);
+    const dm = (n, a) => { if (parts[n]) { ctx.globalAlpha = a; ctx.drawImage(parts[n], 0, dyM); } };
+    if (f < 1 && prevMouth) { dm("mouth_" + prevMouth, 1 - f); dm("mouth_" + m, f); }
+    else dm("mouth_" + m, 1);
+    ctx.globalAlpha = 1;
   } else {
     drawVectorMouth();
   }

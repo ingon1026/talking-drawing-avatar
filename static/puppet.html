@@ -256,11 +256,14 @@ function targetMouth() {
   if (wide > 0.22) return jaw < 0.16 ? "I" : "E";
   return jaw < 0.14 ? "closed" : "E";
 }
-let curMouth = "closed", mouthCand = "closed", candSince = 0;
+let curMouth = "closed", prevMouth = null, switchAt = 0, mouthCand = "closed", candSince = 0;
+const FADE_MS = 90;
 function pickMouth(now) {
   const t = targetMouth();
   if (t !== mouthCand) { mouthCand = t; candSince = now; }
-  if (mouthCand !== curMouth && now - candSince >= 70) curMouth = mouthCand;  // 70ms 유지 시에만 전환
+  if (mouthCand !== curMouth && now - candSince >= 70) {  // 70ms 유지 시에만 전환
+    prevMouth = curMouth; switchAt = now; curMouth = mouthCand;
+  }
   return curMouth;
 }
 
@@ -366,9 +369,17 @@ function render(now) {
   if (manifest.proceduralMouth) {
     drawVectorMouth();  // 근육 채널 직접 구동 (기본)
   } else {
-    // 스프라이트 캐릭터용: 입세트가 벌림 정도를 표현하므로 스케일 없이 jawDrop만
+    // 스프라이트 캐릭터용: 전환 시 크로스페이드로 부드럽게 (스케일 없음, jawDrop만)
     const m = pickMouth(now);
-    draw("mouth_" + m, 0, W("jawopen") * manifest.jawDrop);
+    const dyM = W("jawopen") * manifest.jawDrop;
+    const f = Math.min(1, (now - switchAt) / FADE_MS);
+    if (f < 1 && prevMouth && parts["mouth_" + prevMouth]) {
+      ctx.globalAlpha = 1 - f; draw("mouth_" + prevMouth, 0, dyM);
+      ctx.globalAlpha = f; draw("mouth_" + m, 0, dyM);
+      ctx.globalAlpha = 1;
+    } else {
+      draw("mouth_" + m, 0, dyM);
+    }
   }
   ctx.restore();
 }
