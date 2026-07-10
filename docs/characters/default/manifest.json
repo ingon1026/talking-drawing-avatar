@@ -1,9 +1,5 @@
 {
   "name": "기본 캐릭터",
-  "size": [
-    512,
-    512
-  ],
   "pupilRange": 8,
   "browRange": 12,
   "jawDrop": 9,

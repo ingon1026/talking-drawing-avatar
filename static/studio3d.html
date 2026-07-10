@@ -105,7 +105,7 @@ const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -
 
 const group = new THREE.Group();
 scene.add(group);
-let mesh = null, dict = {}, eyes = [];
+let mesh = null, dict = {}, eyes = [], morphMap = [];
 
 function makeEye(cx) {
   const eg = new THREE.Group();
@@ -122,9 +122,9 @@ function makeEye(cx) {
 }
 
 new GLTFLoader().load("/static/assets3d/mark.glb", g => {
-  mesh = g.scene.getObjectByProperty("type", "Mesh") || g.scene.children[0];
   g.scene.traverse(o => { if (o.isMesh) mesh = o; });
   dict = mesh.morphTargetDictionary || {};
+  morphMap = Object.entries(dict).map(([name, idx]) => [norm(name), idx]);  // 매 프레임 regex 방지
   group.add(g.scene);
   const box = new THREE.Box3().setFromObject(g.scene);
   const c = box.getCenter(new THREE.Vector3());
@@ -198,8 +198,8 @@ function render(now) {
   if (!mesh) return;
 
   const target = currentWeights();
-  const keys = new Set([...Object.keys(smooth), ...Object.keys(target)]);
-  for (const k of keys) smooth[k] = 0.42 * (smooth[k] || 0) + 0.58 * (target[k] || 0);
+  for (const k in target) if (!(k in smooth)) smooth[k] = 0;
+  for (const k in smooth) smooth[k] = 0.42 * smooth[k] + 0.58 * (target[k] || 0);
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
@@ -209,9 +209,8 @@ function render(now) {
 
   // 모프 적용 (실제 3D 근육)
   const inf = mesh.morphTargetInfluences;
-  for (const name in dict) {
-    const k = norm(name);
-    inf[dict[name]] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
+  for (const [k, idx] of morphMap) {
+    inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
   }
 
   // 시선: 슬라이더 우선, 없으면 eyeLook 채널
@@ -220,9 +219,14 @@ function render(now) {
   const gy = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
   for (const e of eyes) e.rotation.set(gy * 0.3, gx * 0.4, 0);
 
-  // 머리 고정: 사용자 드래그 + 발화 중 미세 끄덕임만 (대기 중 완전 정지)
+  // 머리: 사용자 드래그 + 발화 중 미세 끄덕임 + 엔진 head pose(있을 때만 — 현 체크포인트는 미출력)
   nod = 0.85 * nod + 0.15 * W("jawopen");
-  group.rotation.set(userPitch + nod * 0.04, userYaw, 0);
+  let hYaw = 0, hPitch = 0, hRoll = 0;
+  if (anim && anim.head && !audio.paused && !audio.ended) {
+    const hf = anim.head[Math.min(Math.floor(audio.currentTime * anim.fps), anim.head.length - 1)];
+    hYaw = hf[0] * Math.PI / 180; hPitch = hf[1] * Math.PI / 180; hRoll = hf[2] * Math.PI / 180;
+  }
+  group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);
 
   renderer.render(scene, camera);
 }
@@ -249,8 +253,8 @@ $("form").onsubmit = async e => {
       await new Promise(r => setTimeout(r, 300));
     }
     if (job.status === "error") throw new Error(job.error);
-    const { audio_url, fps, names, frames } = job.result;
-    anim = { fps, frames, index: names.map((n, i) => [norm(n), i]) };
+    const { audio_url, fps, names, frames, head } = job.result;
+    anim = { fps, frames, head, index: names.map((n, i) => [norm(n), i]) };
     audio.src = audio_url;
     await audio.play();
     setStatus("");

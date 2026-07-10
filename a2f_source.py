@@ -147,6 +147,17 @@ def _resample_16k_mono(wav_path: str, dst: str) -> None:
     )
 
 
+def _is_16k_mono_pcm16(path: str) -> bool:
+    """이미 exporter 가 읽는 포맷이면 재변환 생략 (서버 경로는 항상 이 포맷)."""
+    import wave
+    try:
+        with wave.open(path, "rb") as w:
+            return (w.getframerate() == 16000 and w.getnchannels() == 1
+                    and w.getsampwidth() == 2)
+    except Exception:
+        return False
+
+
 def _parse_export(txt_path: str):
     """exporter 출력(text)을 (fps, names[list], frames[np.ndarray]) 로 파싱."""
     fps = FPS
@@ -179,9 +190,12 @@ def audio_to_blendshapes(wav_path: str) -> dict:
         raise FileNotFoundError(f"모델 데이터 미생성: {MODEL_JSON}")
 
     with tempfile.TemporaryDirectory() as td:
-        wav16 = os.path.join(td, "in16k.wav")
         out_txt = os.path.join(td, "bs.txt")
-        _resample_16k_mono(wav_path, wav16)
+        if _is_16k_mono_pcm16(wav_path):
+            wav16 = wav_path
+        else:
+            wav16 = os.path.join(td, "in16k.wav")
+            _resample_16k_mono(wav_path, wav16)
         _run_on_server(wav16, out_txt)  # 상주 프로세스: TRT 엔진 재사용(웜 추론)
         fps, sdk_names, arr = _parse_export(out_txt)
 
@@ -200,11 +214,13 @@ def audio_to_blendshapes(wav_path: str) -> dict:
         if target in col:
             frames[:, j] = arr[:, col[target]]
     frames = np.clip(frames, 0.0, 1.0)
+    # A2F 출력이 오디오보다 ~0.4s 늦음(prediction_delay 미적용) — 소스 계약 차원에서 보정
+    frames = frames[int(0.4 * float(fps)):]
 
     return {
         "fps": float(fps),
         "names": list(ARKIT_NAMES),
-        "frames": frames.astype(float).tolist(),
+        "frames": np.round(frames.astype(np.float64), 4).tolist(),
     }
 
 

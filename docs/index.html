@@ -130,11 +130,12 @@ async function initCharacters(selectId) {
 }
 
 function updateDelBtn() {
-  $("delChar").style.display = ($("character").value || "").startsWith("u_") ? "" : "none";
+  // 세션 내 사용자 생성 캐릭터만 삭제 대상 (userChars 존재 여부가 곧 플래그)
+  $("delChar").style.display = userChars[$("character").value] ? "" : "none";
 }
 $("delChar").onclick = async () => {
   const id = $("character").value;
-  if (!id.startsWith("u_") || !confirm("이 캐릭터를 삭제할까요?")) return;
+  if (!userChars[id] || !confirm("이 캐릭터를 삭제할까요?")) return;
   delete userChars[id];
   await initCharacters();
   setStatus("삭제했습니다.");
@@ -269,7 +270,10 @@ function drawVectorMouth(jawDy) {
   const round = Math.max(W("mouthpucker"), W("mouthfunnel"));
   const press = W("mouthclose") * 0.5;
   const smL = W("mouthsmileleft"), smR = W("mouthsmileright");
-  const openH = Math.max(0, jaw * 58 - W("mouthclose") * 30);
+  // 폐합은 press(근육)·mouthclose(폐쇄) 중 강한 쪽 — puppet.html과 동일 공식 유지할 것
+  const lowerDown = (W("mouthlowerdownleft") + W("mouthlowerdownright")) / 2;
+  const pressM = (W("mouthpressleft") + W("mouthpressright")) / 2;
+  const openH = Math.max(0, jaw * 58 + lowerDown * 10 - Math.max(pressM * 8, W("mouthclose") * 30));
   const wBase = st.width || 34;
   const halfL = wBase * (1 + 0.3 * smL - 0.5 * round);
   const halfR = wBase * (1 + 0.3 * smR - 0.5 * round);
@@ -412,8 +416,8 @@ function render(now) {
   if (!parts.base) return;
 
   const target = currentWeights();
-  const keys = new Set([...Object.keys(smooth), ...Object.keys(target)]);
-  for (const k of keys) smooth[k] = 0.42 * (smooth[k] || 0) + 0.58 * (target[k] || 0);
+  for (const k in target) if (!(k in smooth)) smooth[k] = 0;
+  for (const k in smooth) smooth[k] = 0.42 * smooth[k] + 0.58 * (target[k] || 0);
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value;
   smooth.mouthsmileleft = Math.max(smooth.mouthsmileleft || 0, smileOv);
@@ -443,15 +447,14 @@ function render(now) {
   else { glCanvas.style.visibility = "hidden"; }
 
   ctx.clearRect(0, 0, 512, 512);
-  const draw = n => parts[n] && ctx.drawImage(parts[n], 0, 0);
+  const draw = (n, dyy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dyy);
   if (!warpOn) {   // 워프 OFF/미지원: 2D가 흰 배경+base를 그림 (폴백). ON이면 WebGL이 base 담당, 배경은 .stage 흰색.
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 512, 512);
     draw("base");
   }
   const browUp = -(manifest.browRange || 0) * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
                + (manifest.browRange || 0) * 0.8 * (W("browdownleft") + W("browdownright")) / 2;
-  const drawAt = (n, dyy) => parts[n] && ctx.drawImage(parts[n], 0, dyy);
-  drawAt("brow_L", browUp); drawAt("brow_R", browUp);
+  draw("brow_L", browUp); draw("brow_R", browUp);
   if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
   else { draw("eye_L_open"); draw("eye_R_open"); draw("pupil_L"); draw("pupil_R"); }
   // 입 오버레이 세로 이동: 워프 ON이면 jaw 변위장을 입 앵커에서 평가한 값(≈11px·jaw)으로 대체해

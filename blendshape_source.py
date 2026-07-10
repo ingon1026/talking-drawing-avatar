@@ -131,10 +131,10 @@ def audio_to_blendshapes(wav_path: str) -> dict:
     out = {
         "fps": FPS,
         "names": list(ARKIT_NAMES),
-        "frames": arkit.astype(float).tolist(),
+        "frames": np.round(arkit.astype(np.float64), 4).tolist(),  # 4자리면 시각적 손실 없음, JSON 절감
     }
     if head is not None and float(np.abs(head).max()) > 0.05:  # 채널이 죽어있으면 생략
-        out["head"] = head.astype(float).tolist()  # 프레임 × [yaw, pitch, roll] (도)
+        out["head"] = np.round(head.astype(np.float64), 2).tolist()  # 프레임 × [yaw, pitch, roll] (도)
     return out
 
 

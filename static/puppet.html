@@ -125,8 +125,10 @@ async function loadCharacter(id) {
   warp.setCharacter();  // 워프 준비됐으면 새 base 텍스처·커널 중심 반영 (준비 전이면 no-op, init이 이어받음)
 }
 
+let charList = [];
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
+  charList = list;
   const sel = $("character");
   sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
   sel.onchange = () => { loadCharacter(sel.value); updateDelBtn(); };
@@ -136,11 +138,12 @@ async function initCharacters(selectId) {
 }
 
 function updateDelBtn() {
-  $("delChar").style.display = ($("character").value || "").startsWith("u_") ? "" : "none";
+  const c = charList.find(c => c.id === $("character").value);
+  $("delChar").style.display = c && c.deletable ? "" : "none";
 }
 $("delChar").onclick = async () => {
   const id = $("character").value;
-  if (!id.startsWith("u_") || !confirm("이 캐릭터를 삭제할까요?")) return;
+  if (!confirm("이 캐릭터를 삭제할까요?")) return;
   const res = await fetch(`/api/characters/${id}`, { method: "DELETE" });
   if (res.ok) { await initCharacters(); setStatus("삭제했습니다."); }
   else setStatus((await res.json()).detail || "삭제 실패", true);
@@ -331,7 +334,8 @@ function drawVectorMouth(jawDy) {
   const smL = W("mouthsmileleft"), smR = W("mouthsmileright");
   const frL = W("mouthfrownleft"), frR = W("mouthfrownright");
 
-  const openH = Math.max(0, jaw * 58 + lowerDown * 10 - press * 8);
+  // 폐합은 press(근육)·mouthclose(폐쇄) 중 강한 쪽 — docs 데모와 동일 공식 유지할 것
+  const openH = Math.max(0, jaw * 58 + lowerDown * 10 - Math.max(press * 8, W("mouthclose") * 30));
   const wBase = st.width || 34;
   const halfL = wBase * (1 + 0.45 * W("mouthstretchleft") + 0.3 * smL - 0.5 * round);
   const halfR = wBase * (1 + 0.45 * W("mouthstretchright") + 0.3 * smR - 0.5 * round);
@@ -478,10 +482,10 @@ function render(now) {
   }
   if (!parts.base) return;
 
-  // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게)
+  // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
   const target = currentWeights();
-  const keys = new Set([...Object.keys(smooth), ...Object.keys(target)]);
-  for (const k of keys) smooth[k] = 0.42 * (smooth[k] || 0) + 0.58 * (target[k] || 0);
+  for (const k in target) if (!(k in smooth)) smooth[k] = 0;
+  for (const k in smooth) smooth[k] = 0.42 * smooth[k] + 0.58 * (target[k] || 0);
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
   const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };

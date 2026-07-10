@@ -1,9 +1,5 @@
 {
   "name": "졸라맨",
-  "size": [
-    512,
-    512
-  ],
   "pupilRange": 0,
   "browRange": 0,
   "jawDrop": 5,
@@ -18,5 +14,6 @@
     "tongue": "#6a6a6a",
     "teeth": "#e8e8e8",
     "width": 20
-  }
+  },
+  "deletable": false
 }

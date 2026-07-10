@@ -1,9 +1,5 @@
 {
   "name": "돼지",
-  "size": [
-    512,
-    512
-  ],
   "pupilRange": 0,
   "browRange": 0,
   "jawDrop": 6,
@@ -18,5 +14,6 @@
     "tongue": "#f2a0b5",
     "teeth": "#ffffff",
     "width": 26
-  }
+  },
+  "deletable": false
 }

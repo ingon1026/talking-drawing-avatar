@@ -45,12 +45,13 @@ class SpeakRtReq(BaseModel):
     engine: str = "neurosync"  # "neurosync" | "a2f"
 
 
-def tts_to_wav(text: str, voice: str, wav: Path):
+def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False):
     mp3 = wav.with_suffix(".mp3")
     asyncio.run(edge_tts.Communicate(text, voice).save(str(mp3)))
-    subprocess.run(["ffmpeg", "-y", "-i", str(mp3), "-ar", "16000", "-ac", "1", str(wav)],
-                   check=True, capture_output=True)
-    mp3.unlink()
+    subprocess.run(["ffmpeg", "-y", "-i", str(mp3), "-ar", "16000", "-ac", "1",
+                    "-c:a", "pcm_s16le", str(wav)], check=True, capture_output=True)
+    if not keep_mp3:
+        mp3.unlink()
 
 
 def run_video_job(job_id: str, job: dict):
@@ -71,29 +72,31 @@ def run_video_job(job_id: str, job: dict):
 def run_rt_job(job_id: str, job: dict):
     """Phase B: 텍스트 → mp3 + 블렌드셰이프 프레임 (퍼펫 렌더러용)."""
     job["status"] = "tts"
-    mp3 = OUT / f"{job_id}.mp3"
-    asyncio.run(edge_tts.Communicate(job["req"].text, job["req"].voice).save(str(mp3)))
     wav = OUT / f"{job_id}.wav"
-    subprocess.run(["ffmpeg", "-y", "-i", str(mp3), "-ar", "16000", "-ac", "1", str(wav)],
-                   check=True, capture_output=True)
+    tts_to_wav(job["req"].text, job["req"].voice, wav, keep_mp3=True)
 
     job["status"] = "animating"
     if job["req"].engine == "a2f":
-        import a2f_source  # lazy
-        bs = a2f_source.audio_to_blendshapes(str(wav))
-        # A2F 출력이 오디오보다 ~0.4s 늦음(prediction_delay 미적용) — 트랙을 당겨 A/V 싱크
-        bs["frames"] = bs["frames"][int(0.4 * bs["fps"]):]
+        import a2f_source as source  # lazy: 모듈/엔진은 첫 요청 때 로드
     else:
-        import blendshape_source  # lazy: 모듈/모델은 첫 rt 요청 때 로드
-        bs = blendshape_source.audio_to_blendshapes(str(wav))
+        import blendshape_source as source
+    bs = source.audio_to_blendshapes(str(wav))
     job["result"] = {"audio_url": f"/media/{job_id}.mp3", **bs}
     job["status"] = "done"
 
 
+_last_purge = 0.0
+
+
 def purge_old_media(hours: int = 24):
-    """상시 서비스라 생성 파일이 무한 누적되지 않게 오래된 미디어 정리 (demo_* 제외)."""
+    """상시 서비스라 생성 파일이 무한 누적되지 않게 오래된 미디어 정리 (demo_* 제외, 10분 스로틀)."""
+    global _last_purge
     import time
-    cutoff = time.time() - hours * 3600
+    now = time.time()
+    if now - _last_purge < 600:
+        return
+    _last_purge = now
+    cutoff = now - hours * 3600
     for f in OUT.iterdir():
         if (f.suffix in (".mp3", ".mp4", ".wav") and not f.name.startswith("demo_")
                 and f.stat().st_mtime < cutoff):
@@ -177,17 +180,22 @@ def create_character(req: CharacterCreateReq):
         name=req.name.strip() or "내 캐릭터",
         eyes={"L": tuple(req.eye_l), "R": tuple(req.eye_r)},
         mouth_box=tuple(req.mouth_box), mouth_center=tuple(req.mouth_center),
-        mouth_style={"width": width}, jaw_drop=6, closed_eye=("#1a1a1a", eye_lw))
+        mouth_style={"width": width}, jaw_drop=6, closed_eye=("#1a1a1a", eye_lw),
+        deletable=True)
     return {"id": char_id}
 
 
 @app.delete("/api/characters/{char_id}")
 def delete_character(char_id: str):
-    if not char_id.startswith("u_"):
-        raise HTTPException(403, "기본 제공 캐릭터는 삭제할 수 없습니다.")
     d = ROOT / "assets_characters" / char_id
     if not d.exists():
         raise HTTPException(404, "없는 캐릭터입니다.")
+    try:
+        deletable = json.loads((d / "manifest.json").read_text()).get("deletable", False)
+    except Exception:
+        deletable = False
+    if not deletable:
+        raise HTTPException(403, "기본 제공 캐릭터는 삭제할 수 없습니다.")
     shutil.rmtree(d)
     up = ROOT / "uploads" / f"{char_id}.png"
     if up.exists():
@@ -202,12 +210,12 @@ def characters():
     if cdir.exists():
         for d in sorted(cdir.iterdir()):
             if (d / "base.png").exists():
-                name = d.name
                 try:
-                    name = json.loads((d / "manifest.json").read_text()).get("name", d.name)
+                    mf = json.loads((d / "manifest.json").read_text())
                 except Exception:
-                    pass
-                out.append({"id": d.name, "name": name})
+                    mf = {}
+                out.append({"id": d.name, "name": mf.get("name", d.name),
+                            "deletable": bool(mf.get("deletable", False))})
     return out
 
 

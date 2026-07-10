@@ -22,7 +22,6 @@ SIZE = (512, 512)
 OUT = Path(__file__).resolve().parent.parent / "assets_characters" / "default"
 
 SKIN = "#ffe3c9"
-SKIN_SHADE = (232, 190, 158, 90)
 LINE = "#4a3626"
 HAIR = "#4a3728"
 HAIR_HI = "#6a523c"
@@ -34,7 +33,6 @@ IRIS = "#6b4a33"
 
 MANIFEST = {
     "name": "기본 캐릭터",
-    "size": SIZE,
     "pupilRange": 8,   # 시선에 따른 눈동자 이동 px
     "browRange": 12,   # 눈썹 올림 최대 px
     "jawDrop": 9,      # JawOpen에 따른 입 전체 하강 px
