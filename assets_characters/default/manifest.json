@@ -4,19 +4,19 @@
     512,
     512
   ],
-  "pupilRange": 7,
-  "browRange": 10,
-  "jawDrop": 8,
+  "pupilRange": 8,
+  "browRange": 12,
+  "jawDrop": 9,
   "mouthCenter": [
     256,
-    340
+    336
   ],
   "proceduralMouth": true,
   "mouthStyle": {
-    "line": "#3a2e2a",
-    "fill": "#8a3535",
-    "tongue": "#d97b7b",
+    "line": "#4a3626",
+    "fill": "#a2453b",
+    "tongue": "#e08a8a",
     "teeth": "#ffffff",
-    "width": 34
+    "width": 30
   }
 }

@@ -21,28 +21,32 @@ from PIL import Image, ImageDraw
 SIZE = (512, 512)
 OUT = Path(__file__).resolve().parent.parent / "assets_characters" / "default"
 
-SKIN = "#ffdfc4"
-LINE = "#3a2e2a"
-HAIR = "#5a4033"
-SHIRT = "#7fa8ff"
-MOUTH_IN = "#8a3535"
-TONGUE = "#d97b7b"
+SKIN = "#ffe3c9"
+SKIN_SHADE = (232, 190, 158, 90)
+LINE = "#4a3626"
+HAIR = "#4a3728"
+HAIR_HI = "#6a523c"
+SHIRT = "#6d9eff"
+SHIRT_DARK = "#5b87e0"
+MOUTH_IN = "#a2453b"
+TONGUE = "#e08a8a"
+IRIS = "#6b4a33"
 
 MANIFEST = {
     "name": "기본 캐릭터",
     "size": SIZE,
-    "pupilRange": 7,   # 시선에 따른 눈동자 이동 px
-    "browRange": 10,   # 눈썹 올림 최대 px
-    "jawDrop": 8,      # JawOpen에 따른 입 전체 하강 px
-    "mouthCenter": [256, 340],  # 입 기준점
+    "pupilRange": 8,   # 시선에 따른 눈동자 이동 px
+    "browRange": 12,   # 눈썹 올림 최대 px
+    "jawDrop": 9,      # JawOpen에 따른 입 전체 하강 px
+    "mouthCenter": [256, 336],  # 입 기준점
     "proceduralMouth": True,    # True = 근육 채널로 입 윤곽을 직접 그림 (mouth_*.png 무시)
-    "mouthStyle": {"line": LINE, "fill": MOUTH_IN, "tongue": TONGUE, "teeth": "#ffffff", "width": 34},
+    "mouthStyle": {"line": LINE, "fill": MOUTH_IN, "tongue": TONGUE, "teeth": "#ffffff", "width": 30},
 }
 
 # 좌표 기준점
-EYE_L, EYE_R = (200, 260), (312, 260)
-EYE_W, EYE_H = 56, 44
-MOUTH_C = (256, 340)
+EYE_L, EYE_R = (198, 258), (314, 258)
+EYE_W, EYE_H = 62, 50
+MOUTH_C = (256, 336)
 
 
 def canvas():
@@ -56,41 +60,59 @@ def ellipse_at(d, cx, cy, w, h, **kw):
 
 def make_base():
     img, d = canvas()
-    d.rectangle((232, 370, 280, 420), fill=SKIN, outline=LINE, width=4)  # 목
-    d.rounded_rectangle((140, 402, 372, 540), 40, fill=SHIRT, outline=LINE, width=6)  # 몸
-    d.ellipse((126, 100, 386, 400), fill=SKIN, outline=LINE, width=6)  # 얼굴
-    d.chord((118, 92, 394, 330), 180, 360, fill=HAIR)  # 머리 윗부분
-    for cx in (170, 256, 342):  # 앞머리 스캘럽
-        ellipse_at(d, cx, 214, 74, 60, fill=HAIR)
-    ellipse_at(d, 168, 305, 42, 22, fill=(240, 150, 150, 110))  # 볼
-    ellipse_at(d, 344, 305, 42, 22, fill=(240, 150, 150, 110))
-    d.arc((249, 292, 263, 306), 300, 120, fill=LINE, width=4)  # 코
+    # 뒷머리 (얼굴 뒤 레이어)
+    ellipse_at(d, 256, 226, 296, 280, fill=HAIR)
+    # 목·어깨
+    d.rectangle((230, 372, 282, 424), fill=SKIN, outline=LINE, width=4)
+    d.rounded_rectangle((132, 404, 380, 540), 46, fill=SHIRT, outline=LINE, width=6)
+    d.arc((216, 388, 296, 442), 200, 340, fill=SHIRT_DARK, width=8)  # 옷깃
+    # 얼굴 (턱이 살짝 갸름한 타원)
+    d.ellipse((128, 104, 384, 396), fill=SKIN, outline=LINE, width=6)
+    # 귀
+    for cx in (132, 380):
+        ellipse_at(d, cx, 268, 30, 44, fill=SKIN, outline=LINE, width=5)
+    # 앞머리: 둥근 갈래 + 하이라이트 (눈썹 위에서 끝나게)
+    d.chord((120, 96, 392, 298), 180, 360, fill=HAIR)
+    for cx, cy, w, h in ((168, 194, 74, 50), (232, 198, 78, 52), (300, 196, 76, 50), (352, 188, 62, 46)):
+        ellipse_at(d, cx, cy, w, h, fill=HAIR)
+    d.arc((168, 126, 330, 212), 205, 320, fill=HAIR_HI, width=10)  # 머릿결 하이라이트
+    # 볼 홍조
+    ellipse_at(d, 172, 306, 44, 24, fill=(244, 148, 138, 96))
+    ellipse_at(d, 340, 306, 44, 24, fill=(244, 148, 138, 96))
+    # 코
+    d.arc((249, 292, 264, 308), 300, 120, fill=LINE, width=4)
     return img
 
 
 def make_brow(cx):
     img, d = canvas()
-    d.rounded_rectangle((cx - 26, 208, cx + 26, 218), 5, fill=LINE)
+    d.arc((cx - 30, 222, cx + 30, 250), 200, 340, fill=LINE, width=8)
     return img
 
 
 def make_eye_open(c):
     img, d = canvas()
     ellipse_at(d, c[0], c[1], EYE_W, EYE_H, fill="white", outline=LINE, width=5)
+    d.arc((c[0] - EYE_W // 2, c[1] - EYE_H // 2, c[0] + EYE_W // 2, c[1] + EYE_H // 2),
+          200, 340, fill=LINE, width=7)  # 윗라인 강조 (속눈썹 느낌)
     return img
 
 
 def make_eye_closed(c):
     img, d = canvas()
-    d.arc((c[0] - EYE_W // 2, c[1] - 8, c[0] + EYE_W // 2, c[1] + EYE_H // 2 + 6),
-          20, 160, fill=LINE, width=6)
+    d.arc((c[0] - EYE_W // 2, c[1] - 6, c[0] + EYE_W // 2, c[1] + EYE_H // 2 + 10),
+          25, 155, fill=LINE, width=7)
+    d.arc((c[0] + EYE_W // 2 - 8, c[1] + 10, c[0] + EYE_W // 2 + 6, c[1] + 22), 300, 60,
+          fill=LINE, width=4)  # 속눈썹 한 가닥
     return img
 
 
 def make_pupil(c):
     img, d = canvas()
-    ellipse_at(d, c[0], c[1] + 2, 22, 22, fill="#2b1d16")
-    ellipse_at(d, c[0] + 4, c[1] - 3, 7, 7, fill="white")
+    ellipse_at(d, c[0], c[1] + 2, 26, 26, fill=IRIS)          # 홍채
+    ellipse_at(d, c[0], c[1] + 3, 13, 13, fill="#241a12")     # 동공
+    ellipse_at(d, c[0] + 6, c[1] - 4, 8, 8, fill="white")     # 하이라이트
+    ellipse_at(d, c[0] - 5, c[1] + 8, 5, 5, fill=(255, 255, 255, 150))
     return img
 
 
