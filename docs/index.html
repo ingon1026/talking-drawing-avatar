@@ -76,7 +76,8 @@ const cv = $("cv"), ctx = cv.getContext("2d");
 
 // ---------- 캐릭터 로드 (정적 + 세션 내 사용자 생성) ----------
 const PART_FILES = ["base", "brow_L", "brow_R", "eye_L_open", "eye_R_open",
-  "eye_L_closed", "eye_R_closed", "pupil_L", "pupil_R"];
+  "eye_L_closed", "eye_R_closed", "pupil_L", "pupil_R",
+  "mouth_closed", "mouth_M", "mouth_A", "mouth_E", "mouth_I", "mouth_O", "mouth_U"];
 let parts = {}, manifest = { pupilRange: 0, browRange: 0, jawDrop: 8, proceduralMouth: true, mouthStyle: {} };
 const userChars = {};  // id → {manifest, parts} (세션 한정)
 
@@ -186,6 +187,24 @@ function blinkValue(now) {
   return now < blinkUntil ? 1 : 0;
 }
 
+// ---------- 스프라이트 입 (진짜 그림 입세트가 있는 캐릭터) ----------
+function targetMouth() {
+  const jaw = W("jawopen"), round = Math.max(W("mouthpucker"), W("mouthfunnel"));
+  const wide = (W("mouthsmileleft") + W("mouthsmileright")) / 2;
+  if (jaw < 0.06) return W("mouthclose") > 0.25 ? "M" : "closed";
+  if (round > wide + 0.08) return jaw > 0.28 ? "O" : "U";
+  if (jaw > 0.42) return "A";
+  if (wide > 0.22) return jaw < 0.16 ? "I" : "E";
+  return jaw < 0.14 ? "closed" : "E";
+}
+let curMouth = "closed", mouthCand = "closed", candSince = 0;
+function pickMouth(now) {
+  const t = targetMouth();
+  if (t !== mouthCand) { mouthCand = t; candSince = now; }
+  if (mouthCand !== curMouth && now - candSince >= 70) curMouth = mouthCand;
+  return curMouth;
+}
+
 // ---------- 벡터 입 ----------
 function drawVectorMouth() {
   const st = manifest.mouthStyle || {};
@@ -255,7 +274,12 @@ function render(now) {
   draw("base"); draw("brow_L"); draw("brow_R");
   if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
   else { draw("eye_L_open"); draw("eye_R_open"); draw("pupil_L"); draw("pupil_R"); }
-  drawVectorMouth();
+  if (manifest.proceduralMouth === false && parts.mouth_closed) {
+    const m = pickMouth(now);
+    parts["mouth_" + m] && ctx.drawImage(parts["mouth_" + m], 0, W("jawopen") * (manifest.jawDrop || 8));
+  } else {
+    drawVectorMouth();
+  }
   ctx.restore();
 }
 requestAnimationFrame(render);
