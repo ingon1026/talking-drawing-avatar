@@ -78,8 +78,14 @@
 </main>
 
 <script type="module">
-import * as THREE from "three";
-import { GLTFLoader } from "/static/vendor/GLTFLoader.js";
+let THREE, GLTFLoader;
+try {
+  THREE = await import("three");
+  ({ GLTFLoader } = await import("/static/vendor/GLTFLoader.js"));
+} catch (e) {
+  document.getElementById("status").textContent = "3D 모듈 로드 실패: " + e.message;
+  throw e;
+}
 
 const $ = id => document.getElementById(id);
 const audio = $("audio");
