@@ -1,68 +1,104 @@
+<div align="center">
+
+# 🎨 Talking Drawing Avatar
+
+**내가 그린 그림에 목소리와 얼굴 근육을 불어넣는 실시간 아바타 엔진**
+
+[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-GitHub_Pages-5b8cff?style=for-the-badge)](https://ingon1026.github.io/talking-drawing-avatar/)
+[![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.2-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![NVIDIA](https://img.shields.io/badge/Audio2Face--3D-76B900?logo=nvidia&logoColor=white)](https://github.com/NVIDIA/Audio2Face-3D)
+
+<img src="docs/assets/demo_pig.gif" width="300" alt="말하는 돼지 데모"> <img src="docs/assets/demo_stick.gif" width="300" alt="말하는 졸라맨 데모">
+
+*화이트보드에 그린 낙서 두 장이, 텍스트만 입력하면 말을 합니다.*
+
+</div>
+
 ---
-title: Talking Drawing Avatar
-emoji: 🎨
-colorFrom: blue
-colorTo: pink
-sdk: docker
-app_port: 7860
-pinned: false
----
 
-# 말하는 그림 아바타
+## ✨ 특징
 
-텍스트를 입력하면 그림 캐릭터가 한국어로 말하고(립싱크 + 얼굴 움직임), 눈깜빡임을 자유롭게 제어할 수 있다. 두 모드:
+- **텍스트 → 발화**: 한국어 TTS(edge-tts)로 문장을 말하고, 음성에 맞춰 입과 얼굴 근육이 움직임
+- **ARKit 52채널 얼굴 근육**: 음성→블렌드셰이프 엔진 2종을 선택 사용
+  - ⚡ **NeuroSync** (235M, 웜 추론 0.3초) — 실시간 대화용
+  - 🟩 **NVIDIA Audio2Face-3D** (mark v2.3, WSL2 로컬 빌드) — 자연 깜빡임까지 생성
+- **벡터 입 렌더링**: 입모양 스프라이트 교체가 아니라, 근육 채널 14개가 입 윤곽 제어점을 매 프레임 직접 변형 — 입꼬리 좌우 독립, 윗니·혀 노출, 무한 중간 단계
+- **눈깜빡임 완전 제어**: 즉시 깜빡 버튼 / 자동 깜빡임 간격 / 감김 슬라이더
+- **아무 그림이나 캐릭터로**: 드래그앤드랍 → 4클릭(왼눈·오른눈·입 중심·입 영역) → 완성
+- **GPU 없는 무료 데모**: 브라우저 TTS + 한글 음절 분해→입모양 타임라인으로 서버 없이 동작
 
-- **`/` 영상 생성 모드 (Phase A)**: 그림 원본을 AI(JoyVASA)가 통째로 애니메이션 → mp4. 문장당 10~20초.
-- **`/puppet` 실시간 퍼펫 모드 (Phase B)**: 파츠 에셋 기반 캔버스 렌더링. 텍스트 후 ~0.5초 만에 발화, 깜빡임 버튼/슬라이더 즉시 반응.
+<div align="center">
+<img src="docs/assets/expressions_pig.png" width="100%" alt="표정 변화">
 
-## 실행
+*한 문장 안에서의 실제 표정 변화 — 다뭄 · 크게 벌림(윗니/혀) · 오/우 오므림 · 미소 · 눈썹 · 깜빡임*
+</div>
 
-**systemd 서비스로 상시 실행 중** — WSL이 켜지면 자동 기동, 크래시 시 자동 재시작. 수동 실행 불필요.
+## 🏗 아키텍처
 
-```bash
-systemctl --user status face-avatar    # 상태 확인
-systemctl --user restart face-avatar   # 코드 수정 후 재시작
-journalctl --user -u face-avatar -f    # 로그
+```mermaid
+flowchart LR
+    T["💬 텍스트"] --> TTS["edge-tts<br/>(한국어 TTS)"]
+    TTS --> WAV["🔊 음성"]
+    WAV --> NS["NeuroSync<br/>235M · 0.3s"]
+    WAV --> A2F["NVIDIA<br/>Audio2Face-3D"]
+    NS --> BS["ARKit 52ch<br/>블렌드셰이프"]
+    A2F --> BS
+    BS --> R["🎭 웹 캔버스 퍼펫<br/>(벡터 입 + 파츠 합성)"]
+    C["🖼 그림 → 4클릭<br/>캐릭터 빌더"] --> R
+    U["👁 깜빡임 · 표정<br/>실시간 조작"] --> R
 ```
 
-브라우저: http://localhost:8000 (영상 모드) / **http://localhost:8000/puppet (퍼펫 모드, 메인)**
-※ `wsl --shutdown` 하면 꺼지고, WSL 다시 열면 자동 기동.
+## 🖥 데모 vs 풀버전
 
-## 아바타 그림 교체
+| | 🌐 [정적 데모](https://ingon1026.github.io/talking-drawing-avatar/) | 💻 로컬 풀버전 |
+|---|---|---|
+| 서버 | 불필요 (GitHub Pages) | FastAPI + GPU |
+| TTS | 브라우저 내장 (speechSynthesis) | edge-tts (선히/인준/현수) |
+| 립싱크 | 한글 음절→입모양 타임라인 (근사) | **음성 기반 52채널 근육** (NeuroSync / A2F-3D) |
+| 캐릭터 생성 | ✅ (세션 한정) | ✅ (영구 저장) |
+| 요구 사양 | 아무 브라우저 | NVIDIA GPU (12GB 검증) |
 
-**영상 모드**: 이 폴더 최상위에 PNG/JPG를 넣으면 자동 사용 (없으면 JoyVASA 샘플). 정면 얼굴, 눈·입이 잘 보이는 그림일수록 잘 동작.
+## 🚀 로컬 풀버전 실행
 
-**퍼펫 모드 (커스텀 캐릭터)** — 두 가지 방법:
-1. **드래그앤드랍 (권장)**: 퍼펫 페이지의 캐릭터 화면에 그림 파일을 끌어다 놓기 (또는 ➕ 그림 추가 버튼)
-   → 왼눈 클릭 → 오른눈 클릭 → 입 중심 클릭 → 입 영역 드래그 → 이름 입력 → 완성 (ESC 취소).
-   서버가 눈·입을 지우고 스프라이트/벡터 입으로 대체한 캐릭터를 자동 생성 (`character_builder.py`).
-2. 수동: `assets_characters/<이름>/` 폴더에 파츠 PNG 직접 구성 — 규칙은 `tools/make_default_character.py` 참조.
+```bash
+git clone https://github.com/ingon1026/talking-drawing-avatar && cd talking-drawing-avatar
+uv venv --python 3.10 .venv
+uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pillow librosa scipy \
+    torch==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000   # → http://localhost:8000/puppet
+```
 
-## 음성→표정 엔진 (퍼펫 모드에서 선택 가능)
+- **NeuroSync 가중치**(게이트): [convaitech/NEUROSYNC](https://huggingface.co/convaitech/NEUROSYNC) 약관 동의 + `HF_TOKEN` 설정 → 첫 발화 때 자동 다운로드. 없으면 음량 기반 폴백으로 동작.
+- **NVIDIA A2F-3D 엔진**(선택): C++/TensorRT 빌드 필요 — [`Audio2Face-3D-SDK/_project_build/SETUP.md`](https://github.com/NVIDIA/Audio2Face-3D-SDK) 절차 참조 (WSL2 + RTX 4070 Ti에서 검증).
+- **JoyVASA 영상 모드**(선택): 사진풍 인물 그림을 통째로 애니메이션하는 별도 모드 (`/`).
+- 상시 실행: systemd 유저 서비스로 등록해 자동 기동 가능. HF Spaces 배포용 `Dockerfile` / `requirements-space.txt` 포함 (Docker Space는 HF PRO 필요).
 
-- **NeuroSync** (기본, 235M, 웜 ~0.3초): 32채널 활성. 깜빡임·시선 채널은 의도적으로 0 → 웹 렌더러가 자체 처리.
-  가중치(HF convaitech/NEUROSYNC, 게이트) 없으면 폴백(음성 크기→입 벌림만) 자동 전환.
-- **NVIDIA Audio2Face-3D** (mark v2.3, 호출당 ~3초): SDK를 WSL2에서 로컬 빌드(subprocess 방식). 자연 깜빡임 포함.
-  출력이 오디오보다 ~0.4초 늦어 서버에서 트랙을 당겨 보정함. 감정 모델(A2E)은 HF 게이트라 neutral 고정.
-  재빌드 절차: `Audio2Face-3D-SDK/_project_build/SETUP.md`.
+## 📁 구조
 
-## 구성
+```
+├─ app.py                  # FastAPI 서버 (TTS·잡 큐·캐릭터 API)
+├─ blendshape_source.py    # 음성 → ARKit 52ch (NeuroSync, 폴백 내장)
+├─ a2f_source.py           # 음성 → ARKit 52ch (NVIDIA A2F-3D)
+├─ character_builder.py    # 그림 → 퍼펫 캐릭터 (눈/입 분리·베이스 생성)
+├─ static/puppet.html      # 실시간 퍼펫 렌더러 + 제어 패널
+├─ docs/                   # GitHub Pages 정적 데모 (서버리스 버전)
+├─ assets_characters/      # 캐릭터 에셋 (base/눈 스프라이트/manifest)
+└─ tools/                  # 캐릭터 생성 스크립트
+```
 
-- `app.py` — FastAPI 서버 (잡 큐 + edge-tts)
-- `pipeline.py` — JoyVASA 인프로세스 추론 + 눈깜빡임 스케줄 주입 (`python pipeline.py`로 스케줄 자체 검증)
-- `static/index.html` — 웹 UI
-- `JoyVASA/` — 벤더 (src/live_portrait_wmg_pipeline.py에 깜빡임 주입 5줄 수정됨)
-- 생성 속도: 문장당 오디오 길이의 약 2배 시간 (RTX 4070 Ti, 모델 상주 기준)
+## ⚖️ 라이선스 유의사항
 
-## 배포 (HF Spaces)
+| 구성요소 | 라이선스 |
+|---|---|
+| 이 저장소 코드 | 미지정 (추후 결정) |
+| NeuroSync (벤더링·가중치) | 듀얼 — 연매출 $1M 미만 MIT / 이상 상업 허가 |
+| NVIDIA Audio2Face-3D | SDK MIT / 모델 NVIDIA Open Model License |
+| JoyVASA·LivePortrait (영상 모드) | MIT — 단 InsightFace 검출 모델은 **비상업 전용** |
 
-이 리포는 그대로 HF Docker Space로 배포된다 (CPU, 퍼펫 모드만 — JoyVASA 영상 모드와 NVIDIA A2F 엔진은 GPU/TensorRT 필요라 로컬 전용).
-- Space Settings → Secrets에 `HF_TOKEN` (NeuroSync 게이트 모델 접근 가능한 토큰) 등록 시 52채널 표정 활성화.
-  미등록 시 폴백(음성 크기→입 벌림만)으로 동작.
-- 첫 발화 요청 때 가중치(≈900MB)를 자동 다운로드하므로 재시작 직후 첫 응답은 느리다.
+---
 
-## 주의
-
-- LivePortrait/JoyVASA의 InsightFace 검출 모델은 비상업(연구) 전용 — 상업 배포 시 교체 필요.
-- NeuroSync는 듀얼 라이선스 (연매출 $1M 미만 MIT / 이상 상업 허가 필요).
-- VRAM 사용 ~6.7GB. OOM 시 pipeline.py에서 `flag_use_half_precision=True` 고려.
+<div align="center">
+<sub>WSL2 · RTX 4070 Ti에서 개발 — 낙서도 배우가 될 수 있습니다 🐷</sub>
+</div>
