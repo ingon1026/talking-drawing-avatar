@@ -94,7 +94,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 
 | 구성요소 | 라이선스 |
 |---|---|
-| 이 저장소 코드 | 미지정 (추후 결정) |
+| 이 저장소 코드 | MIT ([LICENSE](LICENSE)) |
 | NeuroSync (벤더링·가중치) | 듀얼 — 연매출 $1M 미만 MIT / 이상 상업 허가 |
 | NVIDIA Audio2Face-3D | SDK MIT / 모델 NVIDIA Open Model License |
 | JoyVASA·LivePortrait (영상 모드) | MIT — 단 InsightFace 검출 모델은 **비상업 전용** |

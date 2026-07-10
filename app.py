@@ -90,11 +90,22 @@ def run_rt_job(job_id: str, job: dict):
     job["status"] = "done"
 
 
+def purge_old_media(hours: int = 24):
+    """상시 서비스라 생성 파일이 무한 누적되지 않게 오래된 미디어 정리 (demo_* 제외)."""
+    import time
+    cutoff = time.time() - hours * 3600
+    for f in OUT.iterdir():
+        if (f.suffix in (".mp3", ".mp4", ".wav") and not f.name.startswith("demo_")
+                and f.stat().st_mtime < cutoff):
+            f.unlink(missing_ok=True)
+
+
 def worker():
     # ponytail: GPU가 직렬이라 워커 1개 큐로 충분
     while True:
         job_id = work_q.get()
         job = jobs[job_id]
+        purge_old_media()
         try:
             if job.get("kind") == "rt":
                 run_rt_job(job_id, job)
