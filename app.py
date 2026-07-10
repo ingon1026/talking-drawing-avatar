@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import queue
+import shutil
 import subprocess
 import threading
 import uuid
@@ -167,6 +168,20 @@ def create_character(req: CharacterCreateReq):
         mouth_box=tuple(req.mouth_box), mouth_center=tuple(req.mouth_center),
         mouth_style={"width": width}, jaw_drop=6, closed_eye=("#1a1a1a", eye_lw))
     return {"id": char_id}
+
+
+@app.delete("/api/characters/{char_id}")
+def delete_character(char_id: str):
+    if not char_id.startswith("u_"):
+        raise HTTPException(403, "기본 제공 캐릭터는 삭제할 수 없습니다.")
+    d = ROOT / "assets_characters" / char_id
+    if not d.exists():
+        raise HTTPException(404, "없는 캐릭터입니다.")
+    shutil.rmtree(d)
+    up = ROOT / "uploads" / f"{char_id}.png"
+    if up.exists():
+        up.unlink()
+    return {"ok": True}
 
 
 @app.get("/api/characters")

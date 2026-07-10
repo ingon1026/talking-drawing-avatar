@@ -66,6 +66,7 @@
     <select id="voice"></select>
     <select id="character"></select>
     <button type="button" class="alt" id="addChar">➕ 그림 추가</button>
+    <button type="button" class="alt" id="delChar" style="display:none">🗑 삭제</button>
     <input type="file" id="charFile" accept="image/*" style="display:none">
   </div>
 
@@ -120,12 +121,24 @@ async function initCharacters(selectId) {
   const sel = $("character");
   sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
     + Object.entries(userChars).map(([id, c]) => `<option value="${id}">${c.manifest.name}</option>`).join("");
-  sel.onchange = () => loadCharacter(sel.value);
+  sel.onchange = () => { loadCharacter(sel.value); updateDelBtn(); };
   // 기본 캐릭터가 메인 — 목록 순서·캐시와 무관하게 default 우선
   const def = list.find(c => c.id === "default");
   const pick = selectId || (def ? def.id : (list.length && list[0].id));
   if (pick) { sel.value = pick; await loadCharacter(pick); }
+  updateDelBtn();
 }
+
+function updateDelBtn() {
+  $("delChar").style.display = ($("character").value || "").startsWith("u_") ? "" : "none";
+}
+$("delChar").onclick = async () => {
+  const id = $("character").value;
+  if (!id.startsWith("u_") || !confirm("이 캐릭터를 삭제할까요?")) return;
+  delete userChars[id];
+  await initCharacters();
+  setStatus("삭제했습니다.");
+};
 
 // ---------- 브라우저 TTS ----------
 function loadVoices() {

@@ -10,9 +10,9 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![NVIDIA](https://img.shields.io/badge/Audio2Face--3D-76B900?logo=nvidia&logoColor=white)](https://github.com/NVIDIA/Audio2Face-3D)
 
-<img src="docs/assets/demo_pig.gif" width="300" alt="말하는 돼지 데모"> <img src="docs/assets/demo_stick.gif" width="300" alt="말하는 졸라맨 데모">
+<img src="docs/assets/demo_default.gif" width="250" alt="기본 캐릭터 데모"> <img src="docs/assets/demo_pig.gif" width="250" alt="말하는 돼지 데모"> <img src="docs/assets/demo_stick.gif" width="250" alt="말하는 졸라맨 데모">
 
-*화이트보드에 그린 낙서 두 장이, 텍스트만 입력하면 말을 합니다.*
+*기본 캐릭터부터 화이트보드 낙서까지 — 텍스트만 입력하면 말을 합니다.*
 
 </div>
 
@@ -25,12 +25,14 @@
   - ⚡ **NeuroSync** (235M, 웜 추론 0.3초) — 실시간 대화용
   - 🟩 **NVIDIA Audio2Face-3D** (mark v2.3, WSL2 로컬 빌드) — 자연 깜빡임까지 생성
 - **벡터 입 렌더링**: 입모양 스프라이트 교체가 아니라, 근육 채널 14개가 입 윤곽 제어점을 매 프레임 직접 변형 — 입꼬리 좌우 독립, 윗니·혀 노출, 무한 중간 단계
+- **얼굴 메시 워핑**: 입을 벌리면 턱선·볼이 그림째로 변형 (WebGL 가우시안 변위장, 실패 시 자동 폴백)
+- **감정 프리셋** 😐😊😢😠😲 + 캐릭터 추가/삭제 관리
 - **눈깜빡임 완전 제어**: 즉시 깜빡 버튼 / 자동 깜빡임 간격 / 감김 슬라이더
 - **아무 그림이나 캐릭터로**: 드래그앤드랍 → 4클릭(왼눈·오른눈·입 중심·입 영역) → 완성
 - **GPU 없는 무료 데모**: 브라우저 TTS + 한글 음절 분해→입모양 타임라인으로 서버 없이 동작
 
 <div align="center">
-<img src="docs/assets/expressions_pig.png" width="100%" alt="표정 변화">
+<img src="docs/assets/expressions_default.png" width="100%" alt="표정 변화">
 
 *한 문장 안에서의 실제 표정 변화 — 다뭄 · 크게 벌림(윗니/혀) · 오/우 오므림 · 미소 · 눈썹 · 깜빡임*
 </div>
