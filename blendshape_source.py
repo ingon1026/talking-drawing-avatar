@@ -88,7 +88,7 @@ def _get_model():
 
 
 def _infer_neurosync(wav_path, model):
-    """NeuroSync 추론 → (N, 52) ARKit 계수(0~1 클립). 오디오 너무 짧으면 None."""
+    """NeuroSync 추론 → (arkit (N,52) 0~1, head (N,3) 도 단위). 오디오 너무 짧으면 None."""
     from neurosync_infer.extract_features import extract_audio_features
     from neurosync_infer.audio_processing import process_audio_features
     from neurosync_infer.config import config
@@ -96,7 +96,8 @@ def _infer_neurosync(wav_path, model):
     if feats is None:
         return None
     out = np.asarray(process_audio_features(feats, model, _device, config))  # (N,68), [:, :61]/100 적용됨
-    return np.clip(out[:, :N_ARKIT], 0.0, 1.0)
+    head = out[:, 52:55] * 100.0  # HeadYaw/Pitch/Roll (도) — /100 되돌림
+    return np.clip(out[:, :N_ARKIT], 0.0, 1.0), head
 
 
 def _infer_fallback(wav_path):
@@ -120,17 +121,21 @@ def audio_to_blendshapes(wav_path: str) -> dict:
     global _LAST_SOURCE
     wav_path = str(wav_path)
     model = _get_model()
-    arkit = _infer_neurosync(wav_path, model) if model is not None else None
-    if arkit is None:
-        arkit = _infer_fallback(wav_path)
+    res = _infer_neurosync(wav_path, model) if model is not None else None
+    if res is None:
+        arkit, head = _infer_fallback(wav_path), None
         _LAST_SOURCE = "fallback-rms"
     else:
+        arkit, head = res
         _LAST_SOURCE = "neurosync"
-    return {
+    out = {
         "fps": FPS,
         "names": list(ARKIT_NAMES),
         "frames": arkit.astype(float).tolist(),
     }
+    if head is not None and float(np.abs(head).max()) > 0.05:  # 채널이 죽어있으면 생략
+        out["head"] = head.astype(float).tolist()  # 프레임 × [yaw, pitch, roll] (도)
+    return out
 
 
 if __name__ == "__main__":
@@ -153,4 +158,10 @@ if __name__ == "__main__":
     print(f"frames            : {n}  (~{n / fps:.2f}s @ {fps}fps)")
     print(f"value range (all) : [{arr.min():.4f}, {arr.max():.4f}]")
     print(f"JawOpen mean/std  : {jaw.mean():.4f} / {jaw.std():.4f}  (min {jaw.min():.4f}, max {jaw.max():.4f})")
+    if "head" in res:
+        h = np.array(res["head"])
+        for i, nm in enumerate(["HeadYaw", "HeadPitch", "HeadRoll"]):
+            print(f"{nm:18s}: mean {h[:, i].mean():+.2f}° std {h[:, i].std():.2f}° range [{h[:, i].min():+.2f}, {h[:, i].max():+.2f}]")
+    else:
+        print("head              : (없음/죽은 채널)")
     print(f"infer time        : {dt:.3f}s")

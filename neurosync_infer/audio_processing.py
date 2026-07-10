@@ -160,7 +160,8 @@ def process_audio_features(audio_features, model, device, config):
 
 
 def zero_columns(data):
-    columns_to_zero = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60]
-    modified_data = np.copy(data) 
+    # 52~54(head yaw/pitch/roll)는 퍼펫 머리 움직임용으로 살림 (원본은 0처리했음)
+    columns_to_zero = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 51, 55, 56, 57, 58, 59, 60]
+    modified_data = np.copy(data)
     modified_data[:, columns_to_zero] = 0
     return modified_data

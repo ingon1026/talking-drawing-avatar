@@ -44,6 +44,15 @@
     <button id="send" type="submit">말하기</button>
   </form>
 
+  <div class="row" id="emotions">
+    <span style="color:#9a9ab0;font-size:.88rem">감정:</span>
+    <button type="button" class="alt" data-emo="neutral">😐 기본</button>
+    <button type="button" class="alt" data-emo="joy">😊 기쁨</button>
+    <button type="button" class="alt" data-emo="sad">😢 슬픔</button>
+    <button type="button" class="alt" data-emo="angry">😠 화남</button>
+    <button type="button" class="alt" data-emo="surprise">😲 놀람</button>
+  </div>
+
   <div class="row">
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
@@ -173,9 +182,27 @@ function currentWeights() {
   return seg ? seg.w : {};
 }
 
+// ---------- 감정 프리셋 ----------
+const EMOTIONS = {
+  neutral: {},
+  joy: { mouthsmileleft: 0.6, mouthsmileright: 0.6 },
+  sad: { mouthfrownleft: 0.55, mouthfrownright: 0.55, browinnerup: 0.65 },
+  angry: { browdownleft: 0.75, browdownright: 0.75, mouthfrownleft: 0.3, mouthfrownright: 0.3, mouthclose: 0.3 },
+  surprise: { browinnerup: 0.5, browouterupleft: 0.7, browouterupright: 0.7, jawopen: 0.3 },
+};
+let emotion = EMOTIONS.neutral;
+document.querySelectorAll("#emotions button").forEach(b => {
+  b.onclick = () => {
+    emotion = EMOTIONS[b.dataset.emo];
+    document.querySelectorAll("#emotions button").forEach(x => x.style.background = "#2a2a35");
+    b.style.background = "#5b8cff";
+  };
+});
+
 // ---------- 상태·깜빡임 ----------
 let smooth = {};
 const W = k => smooth[k] || 0;
+let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
 let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
 $("blinkBtn").onclick = () => blinkUntil = performance.now() + 140;
 $("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
@@ -263,18 +290,32 @@ function render(now) {
   const smileOv = +$("ovSmile").value;
   smooth.mouthsmileleft = Math.max(smooth.mouthsmileleft || 0, smileOv);
   smooth.mouthsmileright = Math.max(smooth.mouthsmileright || 0, smileOv);
+  for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]);
   const blink = Math.max(blinkValue(now), +$("ovBlink").value);
 
+  // 머리: 발화 에너지 끄덕임 + 느린 표류 + 잔잔한 사인
   const t = now / 1000, sway = talk ? 1 : 0.5;
-  const rot = Math.sin(t * 0.9) * 0.012 * sway;
-  const dy = Math.sin(t * 1.7) * 2 * sway;
+  nod = 0.85 * nod + 0.15 * W("jawopen");
+  if (now > wanderNext) {
+    wanderNext = now + 2200 + Math.random() * 2500;
+    wanderGoalR = (Math.random() - 0.5) * 0.03;
+    wanderGoalY = (Math.random() - 0.5) * 5;
+  }
+  wanderR += (wanderGoalR - wanderR) * 0.02;
+  wanderY += (wanderGoalY - wanderY) * 0.02;
+  const rot = Math.sin(t * 0.9) * 0.008 * sway + wanderR + nod * 0.015;
+  const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3;
 
   ctx.clearRect(0, 0, 512, 512);
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 512, 512);
   ctx.save();
   ctx.translate(256, 256); ctx.rotate(rot); ctx.translate(-256, -256 + dy);
   const draw = n => parts[n] && ctx.drawImage(parts[n], 0, 0);
-  draw("base"); draw("brow_L"); draw("brow_R");
+  draw("base");
+  const browUp = -(manifest.browRange || 0) * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
+               + (manifest.browRange || 0) * 0.8 * (W("browdownleft") + W("browdownright")) / 2;
+  const drawAt = (n, dyy) => parts[n] && ctx.drawImage(parts[n], 0, dyy);
+  drawAt("brow_L", browUp); drawAt("brow_R", browUp);
   if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
   else { draw("eye_L_open"); draw("eye_R_open"); draw("pupil_L"); draw("pupil_R"); }
   if (manifest.proceduralMouth === false && parts.mouth_closed) {
