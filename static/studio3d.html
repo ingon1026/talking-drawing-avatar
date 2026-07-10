@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NVIDIA 3D 스튜디오</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    font-family: 'Pretendard', 'Noto Sans KR', sans-serif; background: #16161d; color: #e8e8ef;
+  }
+  main { width: min(560px, 94vw); padding: 24px 0 48px; }
+  h1 { font-size: 1.2rem; font-weight: 600; margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
+  h1 a { color: #9a9ab0; font-size: .85rem; text-decoration: none; }
+  .stage { width: 100%; aspect-ratio: 1; background: #0d0d12; border-radius: 16px; overflow: hidden; border: 1px solid #2a2a35; cursor: grab; }
+  canvas { width: 100%; height: 100%; display: block; }
+  form { display: flex; gap: 8px; margin-top: 16px; }
+  input[type=text] { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35; background: #0d0d12; color: inherit; font-size: 1rem; }
+  button { padding: 10px 16px; border-radius: 10px; border: 0; background: #76b900; color: #fff; font-size: .95rem; cursor: pointer; }
+  button:disabled { background: #333; }
+  button.alt { background: #2a2a35; }
+  .row { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .controls { margin-top: 16px; display: grid; gap: 10px; font-size: .88rem; }
+  .controls label { display: flex; align-items: center; gap: 10px; }
+  .controls label span.k { width: 88px; color: #9a9ab0; }
+  .controls input[type=range] { flex: 1; }
+  select { padding: 8px; border-radius: 8px; background: #0d0d12; color: inherit; border: 1px solid #2a2a35; }
+  #status { margin-top: 12px; color: #9a9ab0; font-size: .9rem; min-height: 1.2em; }
+  #status.error { color: #ff7a7a; }
+</style>
+<script type="importmap">{ "imports": { "three": "/static/vendor/three.module.js" } }</script>
+</head>
+<body>
+<main>
+  <h1>🟩 NVIDIA 3D 스튜디오 <a href="/puppet">← 2D 퍼펫 모드</a></h1>
+
+  <div class="stage"><canvas id="cv"></canvas></div>
+
+  <form id="form">
+    <input id="text" type="text" placeholder="mark가 말할 문장을 입력하세요…" autocomplete="off">
+    <button id="send" type="submit">말하기</button>
+  </form>
+
+  <div class="row" id="emotions">
+    <span style="color:#9a9ab0;font-size:.88rem">감정:</span>
+    <button type="button" class="alt" data-emo="neutral">😐</button>
+    <button type="button" class="alt" data-emo="joy">😊</button>
+    <button type="button" class="alt" data-emo="sad">😢</button>
+    <button type="button" class="alt" data-emo="angry">😠</button>
+    <button type="button" class="alt" data-emo="surprise">😲</button>
+  </div>
+
+  <div class="row">
+    <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
+    <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
+    <select id="voice">
+      <option value="ko-KR-InJoonNeural">인준 (남성)</option>
+      <option value="ko-KR-HyunsuMultilingualNeural">현수 (남성)</option>
+      <option value="ko-KR-SunHiNeural">선히 (여성)</option>
+    </select>
+    <select id="engine">
+      <option value="a2f">NVIDIA A2F-3D</option>
+      <option value="neurosync">NeuroSync</option>
+    </select>
+  </div>
+
+  <div class="controls">
+    <label><span class="k">눈 감기</span><input id="ovBlink" type="range" min="0" max="1" step="0.01" value="0"></label>
+    <label><span class="k">입 벌림</span><input id="ovJaw" type="range" min="0" max="1" step="0.01" value="0"></label>
+    <label><span class="k">미소</span><input id="ovSmile" type="range" min="0" max="1" step="0.01" value="0"></label>
+    <label><span class="k">눈썹</span><input id="ovBrow" type="range" min="0" max="1" step="0.01" value="0"></label>
+  </div>
+
+  <div id="status">3D 모델 로딩 중… (41MB, 최초 1회)</div>
+  <audio id="audio"></audio>
+</main>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "/static/vendor/GLTFLoader.js";
+
+const $ = id => document.getElementById(id);
+const audio = $("audio");
+const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
+
+// ---------- Three.js 씬 ----------
+const canvas = $("cv");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0d12);
+const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 1000);
+scene.add(new THREE.HemisphereLight(0xdfe6ff, 0x2a2018, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1.5, 2, 3); scene.add(key);
+const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -2); scene.add(rim);
+
+const group = new THREE.Group();
+scene.add(group);
+let mesh = null, dict = {};
+
+new GLTFLoader().load("/static/assets3d/mark.glb", g => {
+  mesh = g.scene.getObjectByProperty("type", "Mesh") || g.scene.children[0];
+  g.scene.traverse(o => { if (o.isMesh) mesh = o; });
+  dict = mesh.morphTargetDictionary || {};
+  group.add(g.scene);
+  const box = new THREE.Box3().setFromObject(g.scene);
+  const c = box.getCenter(new THREE.Vector3());
+  group.position.set(-c.x, -c.y, -c.z);           // 머리를 원점으로
+  camera.position.set(0, 2, 42);
+  camera.lookAt(0, 0, 0);
+  setStatus("");
+}, undefined, e => setStatus("모델 로드 실패: " + e, true));
+
+function resize() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = 1; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(canvas.parentElement);
+
+// 드래그로 헤드 회전
+let dragging = false, px = 0, py = 0, userYaw = 0, userPitch = 0;
+canvas.addEventListener("pointerdown", e => { dragging = true; px = e.clientX; py = e.clientY; });
+addEventListener("pointerup", () => dragging = false);
+addEventListener("pointermove", e => {
+  if (!dragging) return;
+  userYaw += (e.clientX - px) * 0.005; userPitch += (e.clientY - py) * 0.003;
+  userPitch = Math.max(-0.4, Math.min(0.4, userPitch));
+  px = e.clientX; py = e.clientY;
+});
+
+// ---------- 상태 (퍼펫과 동일 구조) ----------
+let anim = null, smooth = {};
+const W = k => smooth[k] || 0;
+let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
+let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
+$("blinkBtn").onclick = () => blinkUntil = performance.now() + 150;
+function blinkValue(now) {
+  if ($("autoBlink").checked && now > nextAutoBlink) {
+    blinkUntil = now + 150;
+    nextAutoBlink = now + 3500 * (0.7 + Math.random() * 0.8);
+  }
+  return now < blinkUntil ? 1 : 0;
+}
+
+const EMOTIONS = {
+  neutral: {},
+  joy: { mouthsmileleft: 0.55, mouthsmileright: 0.55, cheeksquintleft: 0.45, cheeksquintright: 0.45, eyesquintleft: 0.25, eyesquintright: 0.25 },
+  sad: { mouthfrownleft: 0.5, mouthfrownright: 0.5, browinnerup: 0.7, mouthshrugupper: 0.2 },
+  angry: { browdownleft: 0.85, browdownright: 0.85, nosesneerleft: 0.4, nosesneerright: 0.4, mouthpressleft: 0.4, mouthpressright: 0.4, jawforward: 0.25 },
+  surprise: { browinnerup: 0.6, browouterupleft: 0.75, browouterupright: 0.75, eyewideleft: 0.8, eyewideright: 0.8, jawopen: 0.3 },
+};
+let emotion = EMOTIONS.neutral;
+document.querySelectorAll("#emotions button").forEach(b => {
+  b.onclick = () => {
+    emotion = EMOTIONS[b.dataset.emo];
+    document.querySelectorAll("#emotions button").forEach(x => x.style.background = "#2a2a35");
+    b.style.background = "#76b900";
+  };
+});
+
+function currentWeights() {
+  const w = {};
+  if (anim && !audio.paused && !audio.ended) {
+    const f = anim.frames[Math.min(Math.floor(audio.currentTime * anim.fps), anim.frames.length - 1)];
+    for (const [k, col] of anim.index) w[k] = f[col];
+  }
+  return w;
+}
+
+// ---------- 렌더 루프 ----------
+function render(now) {
+  requestAnimationFrame(render);
+  if (!mesh) return;
+
+  const target = currentWeights();
+  const keys = new Set([...Object.keys(smooth), ...Object.keys(target)]);
+  for (const k of keys) smooth[k] = 0.42 * (smooth[k] || 0) + 0.58 * (target[k] || 0);
+  smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
+  const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
+  for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
+  for (const k of ["browinnerup", "browouterupleft", "browouterupright"]) smooth[k] = Math.max(smooth[k] || 0, browOv);
+  for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]);
+  const blink = Math.max(blinkValue(now), +$("ovBlink").value, W("eyeblinkleft"), W("eyeblinkright"));
+
+  // 모프 적용 (실제 3D 근육)
+  const inf = mesh.morphTargetInfluences;
+  for (const name in dict) {
+    const k = norm(name);
+    inf[dict[name]] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
+  }
+
+  // 머리 움직임: 끄덕임 + 표류 + 사용자 드래그
+  nod = 0.85 * nod + 0.15 * W("jawopen");
+  if (now > wanderNext) {
+    wanderNext = now + 2200 + Math.random() * 2500;
+    wanderGoalR = (Math.random() - 0.5) * 0.06;
+    wanderGoalY = (Math.random() - 0.5) * 0.08;
+  }
+  wanderR += (wanderGoalR - wanderR) * 0.02;
+  wanderY += (wanderGoalY - wanderY) * 0.02;
+  const t = now / 1000;
+  group.rotation.set(
+    userPitch + nod * 0.06 + Math.sin(t * 1.1) * 0.01,
+    userYaw + wanderY,
+    wanderR * 0.5 + Math.sin(t * 0.7) * 0.008);
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(render);
+
+// ---------- 발화 (퍼펫과 동일 API) ----------
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("send").disabled = true;
+  setStatus("생성 중…");
+  try {
+    const res = await fetch("/api/speak_rt", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice: $("voice").value, engine: $("engine").value }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const { job_id } = await res.json();
+    let job;
+    while (true) {
+      job = await fetch(`/api/jobs/${job_id}`).then(r => r.json());
+      if (job.status === "done" || job.status === "error") break;
+      await new Promise(r => setTimeout(r, 300));
+    }
+    if (job.status === "error") throw new Error(job.error);
+    const { audio_url, fps, names, frames } = job.result;
+    anim = { fps, frames, index: names.map((n, i) => [norm(n), i]) };
+    audio.src = audio_url;
+    await audio.play();
+    setStatus("");
+  } catch (err) {
+    setStatus(err.message, true);
+  } finally {
+    $("send").disabled = false;
+  }
+};
+
+function setStatus(msg, isError) {
+  const s = $("status");
+  s.textContent = msg;
+  s.className = isError ? "error" : "";
+}
+</script>
+</body>
+</html>

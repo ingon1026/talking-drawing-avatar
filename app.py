@@ -223,5 +223,11 @@ def puppet():
     return FileResponse(ROOT / "static" / "puppet.html")
 
 
+@app.get("/3d")
+def studio3d():
+    return FileResponse(ROOT / "static" / "studio3d.html")
+
+
 app.mount("/media", StaticFiles(directory=OUT), name="media")
 app.mount("/characters", StaticFiles(directory=ROOT / "assets_characters"), name="characters")
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

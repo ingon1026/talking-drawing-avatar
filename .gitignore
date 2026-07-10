@@ -12,3 +12,6 @@ __pycache__/
 # 로그·잡동사니
 *.log
 *Zone.Identifier
+
+# 3D 에셋 (NVIDIA 모델 파생물 — tools/build_mark_glb.py로 재생성, 재배포 회피)
+static/assets3d/
