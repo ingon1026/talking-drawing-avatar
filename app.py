@@ -43,11 +43,20 @@ class SpeakRtReq(BaseModel):
     text: str
     voice: str = DEFAULT_VOICE
     engine: str = "neurosync"  # "neurosync" | "a2f"
+    # 감정 → 목소리 톤 (비율, 0 = 평상시). 클라이언트의 AvatarCore.voiceProsody 산출값.
+    rate: float = 0.0
+    pitch: float = 0.0
+    volume: float = 0.0
 
 
-def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False):
+def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody=None):
     mp3 = wav.with_suffix(".mp3")
-    asyncio.run(edge_tts.Communicate(text, voice).save(str(mp3)))
+    # edge-tts 는 rate/volume 은 퍼센트, pitch 는 Hz 문자열(부호 필수)을 받는다.
+    p = prosody or {}
+    kw = {"rate": f"{round(p.get('rate', 0) * 100):+d}%",
+          "volume": f"{round(p.get('volume', 0) * 100):+d}%",
+          "pitch": f"{round(p.get('pitch', 0) * 100):+d}Hz"}
+    asyncio.run(edge_tts.Communicate(text, voice, **kw).save(str(mp3)))
     subprocess.run(["ffmpeg", "-y", "-i", str(mp3), "-ar", "16000", "-ac", "1",
                     "-c:a", "pcm_s16le", str(wav)], check=True, capture_output=True)
     if not keep_mp3:
@@ -73,7 +82,9 @@ def run_rt_job(job_id: str, job: dict):
     """Phase B: 텍스트 → mp3 + 블렌드셰이프 프레임 (퍼펫 렌더러용)."""
     job["status"] = "tts"
     wav = OUT / f"{job_id}.wav"
-    tts_to_wav(job["req"].text, job["req"].voice, wav, keep_mp3=True)
+    r = job["req"]
+    tts_to_wav(r.text, r.voice, wav, keep_mp3=True,
+               prosody={"rate": r.rate, "pitch": r.pitch, "volume": r.volume})
 
     job["status"] = "animating"
     if job["req"].engine == "a2f":

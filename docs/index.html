@@ -165,10 +165,10 @@ const V_MAP = ["A","I","A","I","EO","I","EO","I","O","A","A","O","O","O","O","O"
 const LABIAL_INIT = new Set([6, 7, 8, 17]);   // ㅁㅂㅃㅍ
 const LABIAL_FINAL = new Set([16, 17, 26]); // 종성 ㅁㅂㅍ
 
-function buildTimeline(text) {
+function buildTimeline(text, rate = 1) {
   const segs = [];
   let t = 0;
-  const SYL = 0.185;  // 초/음절 (rate 1 근사, boundary 이벤트로 보정)
+  const SYL = 0.185 / rate;  // 초/음절 (감정에 따라 말이 빨라지면 입도 같이 빨라짐, boundary 로 보정)
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
     if (code >= 0xAC00 && code <= 0xD7A3) {
@@ -186,13 +186,17 @@ function buildTimeline(text) {
 }
 
 let talk = null;  // {segs, start, offset}
-function speak(text) {
+function speak(text, prosody) {
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   const vi = +$("voice").value;
   if (koVoices[vi]) u.voice = koVoices[vi];
   u.lang = "ko-KR";
-  const segs = buildTimeline(text);
+  // 감정 → 목소리 톤 (브라우저 TTS는 배수 단위: rate 0.1~10, pitch 0~2)
+  const rate = Math.max(0.5, Math.min(2, 1 + (prosody ? prosody.rate : 0)));
+  u.rate = rate;
+  u.pitch = Math.max(0, Math.min(2, 1 + (prosody ? prosody.pitch : 0)));
+  const segs = buildTimeline(text, rate);
   u.onstart = () => { talk = { segs, start: performance.now(), offset: 0 }; };
   u.onboundary = e => {  // 실제 발화 위치로 타임라인 재동기화
     if (!talk) return;
@@ -308,11 +312,15 @@ requestAnimationFrame(render);
 $("form").onsubmit = e => {
   e.preventDefault();
   const text = $("text").value.trim();
-  if (text && $("autoEmo").checked) {
-    const emoName = AvatarCore.inferEmotion(text);
-    if (emoName) emo.setEmotion(emoName);
+  if (!text) return;
+  // 감정 자동: 얼굴 프리셋 + 목소리 톤(속도·음높이)을 함께 적용
+  let prosody = null;
+  if ($("autoEmo").checked) {
+    const r = AvatarCore.inferEmotion(text);
+    if (r) { emo.setEmotion(r.emo, r.intensity); prosody = AvatarCore.voiceProsody(r.emo, r.intensity); }
   }
-  if (text) { speak(text); setStatus(""); }
+  speak(text, prosody);
+  setStatus("");
 };
 
 // ---------- 드래그앤드랍 캐릭터 생성 (클라이언트 빌더) ----------

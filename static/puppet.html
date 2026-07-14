@@ -268,14 +268,17 @@ $("form").onsubmit = async e => {
   e.preventDefault();
   const text = $("text").value.trim();
   if (!text) return;
+  // 감정 자동: 얼굴 프리셋 + 목소리 톤(속도·음높이)을 함께 적용
+  let prosody = null;
   if ($("autoEmo").checked) {
-    const emoName = AvatarCore.inferEmotion(text);
-    if (emoName) emo.setEmotion(emoName);
+    const r = AvatarCore.inferEmotion(text);
+    if (r) { emo.setEmotion(r.emo, r.intensity); prosody = AvatarCore.voiceProsody(r.emo, r.intensity); }
   }
   $("send").disabled = true;
   setStatus("생성 중…");
   try {
-    await AvatarCore.speakFlow({ text, voice: $("voice").value, engine: $("engine").value, audioEl: audio, onAnim: a => { anim = a; } });
+    await AvatarCore.speakFlow({ text, voice: $("voice").value, engine: $("engine").value,
+                                audioEl: audio, onAnim: a => { anim = a; }, prosody });
     setStatus("");
   } catch (err) {
     setStatus(err.message, true);

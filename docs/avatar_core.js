@@ -19,13 +19,60 @@ window.AvatarCore = (() => {
   const WARP_JAW_G = Math.exp(-(38 * 38) / (2 * 55 * 55));                   // jaw 변위장을 입 앵커(38px 위)에서 평가한 가우시안 (시그마 55 = 워프 셰이더와 동일)
 
   // 텍스트 감정 추론 (발화 시 자동 프리셋 — 세 페이지 동일 규칙)
+  // 감정 사전: [정규식, 가중치]. 어간 문자클래스로 활용형을 함께 잡는다(슬프/슬퍼/슬펐/슬픈…).
+  // 순서가 아니라 점수 합으로 뽑으므로 "ㅋㅋ 대박 웃겨"(joy 4.0 vs surprise 1.6)처럼 겹쳐도 옳게 갈린다.
+  const EMO_RULES = {
+    joy: [
+      [/ㅋ{2,}|ㅎ{2,}/g, 2.2], [/하하|호호|ㅍㅎ|웃[겨긴음었]/g, 1.8],
+      [/신[나난났]|행복|기[쁘뻐뻤쁜]|즐거|좋[아다은네았]|최고|사랑|반[가갑]|재[밌미]|고마[워웠운]|감사|😊|😄|🎉|👍|❤/g, 1.4],
+      [/축하|성공|해냈|굿|짱/g, 1.2], [/!/g, 0.35],
+    ],
+    sad: [
+      [/[ㅠㅜ]{2,}/g, 2.2],
+      [/슬[프퍼펐픈]|우울|눈물|울[고었]|외로|쓸쓸|속상|서운|아쉽|안타깝|그립|😢|😭/g, 1.6],
+      [/힘[들듦드]|아[파프픈]|지[친쳐쳤]|미안|죄송|망했|실패|포기/g, 1.2], [/\.{3,}/g, 0.4],
+    ],
+    angry: [
+      [/화[나난가났]|짜증|열받|빡[쳐치친]|분노|억울|싫[어다은]|그만해|😠|😡/g, 1.8],
+      [/최악|엉망|어이없|말도 안|참[나내]/g, 1.4],
+    ],
+    surprise: [
+      [/헉|깜짝|놀[라랐랍]|대박|세상에|어머|웬일|믿[을기]\s*수\s*없|😲|😮/g, 1.6],
+      [/[?!]{2,}/g, 1.0], [/진짜\?|정말\?|\?/g, 0.3],
+    ],
+  };
+  // 부정 표현 — "안 좋아", "좋지 않아", "재미없어"는 기쁨이 아니다.
+  const NEGATION = /안\s*(좋|기쁘|행복|즐거|반가)|(좋|기쁘|행복|즐겁)지\s*(않|못)|재미\s*없|별로|싫증/;
+
+  /** 텍스트 → {emo, intensity} | null. 모델 없이 점수 사전으로 추론(정적 데모에서도 동작). */
   function inferEmotion(text) {
-    if (/ㅋㅋ|ㅎㅎ|하하|호호|웃겨|웃음/.test(text)) return "joy";  // 웃음이 최우선 신호
-    if (/[ㅠㅜ]{2,}|슬프|슬퍼|우울|눈물|아파|힘들|속상|외로/.test(text)) return "sad";
-    if (/화나|화가|짜증|열받|분노|싫어|그만해/.test(text)) return "angry";
-    if (/헉|깜짝|놀라|대박|세상에|믿을 수|[?!]{2,}/.test(text)) return "surprise";
-    if (/신나|행복|좋아|좋다|최고|사랑|기뻐|반가|!/.test(text)) return "joy";  // ㅋㅋ/ㅎㅎ/하하/호호는 첫 줄이 선점하므로 여기선 뺌
-    return null;
+    const score = { joy: 0, sad: 0, angry: 0, surprise: 0 };
+    for (const emo in EMO_RULES) {
+      for (const [re, w] of EMO_RULES[emo]) {
+        const m = text.match(re);
+        if (m) score[emo] += w * Math.min(m.length, 3);   // 반복 강조는 3회까지만 가산
+      }
+    }
+    if (NEGATION.test(text)) { score.joy = 0; score.sad += 1.0; }
+    let best = null, top = 0;
+    for (const k in score) if (score[k] > top) { top = score[k]; best = k; }
+    if (!best || top < 1.0) return null;                   // 신호가 약하면 중립 유지
+    return { emo: best, intensity: Math.min(1, 0.45 + top * 0.16) };  // 0.45~1.0
+  }
+
+  // ---------- 감정 → 목소리 톤 (얼굴만 웃고 목소리는 무표정한 괴리 해소) ----------
+  // 비율값: rate=속도, pitch=음높이, volume=크기. edge-tts("+10%"/"+14Hz")와 브라우저 TTS(배수) 양쪽에서 사용.
+  const VOICE_STYLE = {
+    joy:      { rate: 0.10, pitch: 0.16 },
+    sad:      { rate: -0.12, pitch: -0.12 },
+    angry:    { rate: 0.06, pitch: -0.06, volume: 0.15 },
+    surprise: { rate: 0.08, pitch: 0.22 },
+    neutral:  {},
+  };
+  function voiceProsody(emo, intensity = 1) {
+    const s = VOICE_STYLE[emo] || VOICE_STYLE.neutral;
+    return { rate: (s.rate || 0) * intensity, pitch: (s.pitch || 0) * intensity,
+             volume: (s.volume || 0) * intensity };
   }
 
   // 지수 평활 (무할당, in-place). target 에만 있는 새 키는 0에서 출발.
@@ -56,8 +103,11 @@ window.AvatarCore = (() => {
   // 감정 상태 + 버튼 배선. buttons/activeColor 는 페이지가 주입(2D #5b8cff / 3D #76b900).
   function makeEmotion(buttons, activeColor) {
     let emotion = EMOTIONS.neutral;
-    function setEmotion(key) {
-      emotion = EMOTIONS[key] || EMOTIONS.neutral;
+    // intensity: 자동 추론 시 감정 세기(0~1)로 프리셋 값을 스케일. 버튼 클릭은 항상 1.
+    function setEmotion(key, intensity = 1) {
+      const base = EMOTIONS[key] || EMOTIONS.neutral;
+      emotion = intensity >= 0.999 ? base
+        : Object.fromEntries(Object.entries(base).map(([k, v]) => [k, v * intensity]));
       buttons.forEach(x => x.style.background = x.dataset.emo === key ? activeColor : "#2a2a35");
     }
     buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });
@@ -344,10 +394,10 @@ window.AvatarCore = (() => {
   }
 
   // ---------- 발화 요청 → 잡 폴링 → 결과 (내부) ----------
-  async function speakRT({ text, voice, engine }) {
+  async function speakRT({ text, voice, engine, prosody }) {
     const res = await fetch("/api/speak_rt", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice, engine }),
+      body: JSON.stringify({ text, voice, engine, ...(prosody || {}) }),
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     const { job_id } = await res.json();
@@ -365,8 +415,8 @@ window.AvatarCore = (() => {
   // speakRT → anim 조립(head 포함, 2D는 미사용이라 무해) → onAnim(재생 전 반영) → audio.src → play.
   // onAnim 은 play 로딩 창 동안 렌더 루프가 최신 anim 을 보게 하려고 src/play 이전에 호출(원본 순서 유지).
   // 페이지 핸들러는 autoEmo·버튼 disable·에러 setStatus 만 담당.
-  async function speakFlow({ text, voice, engine, audioEl, onAnim }) {
-    const r = await speakRT({ text, voice, engine });
+  async function speakFlow({ text, voice, engine, audioEl, onAnim, prosody }) {
+    const r = await speakRT({ text, voice, engine, prosody });
     const anim = { fps: r.fps, frames: r.frames, head: r.head, index: r.names.map((n, i) => [norm(n), i]) };
     if (onAnim) onAnim(anim);
     audioEl.src = r.audio_url;
@@ -460,7 +510,7 @@ window.AvatarCore = (() => {
   }
 
   return {
-    norm, inferEmotion, smoothStep, weightsFromAnim,
+    norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, bindStatus, makeAnnotator,
   };
