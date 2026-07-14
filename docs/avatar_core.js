@@ -429,6 +429,47 @@ window.AvatarCore = (() => {
     return (msg, isError) => { el.textContent = msg; el.className = isError ? "error" : ""; };
   }
 
+  // ---------- 마이크 음성인식 (Web Speech API — 브라우저 내장, 모델 불필요) ----------
+  // 미지원 브라우저(Chrome 계열 외)면 null 반환 → 페이지가 마이크 버튼을 숨긴다.
+  // onText(텍스트, isFinal): 인식 중간결과(false)와 최종결과(true)를 모두 전달.
+  function makeMic({ lang = "ko-KR", onText, onState }) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const rec = new SR();
+    rec.lang = lang;
+    rec.interimResults = true;   // 말하는 도중에도 텍스트를 보여줌
+    rec.continuous = false;      // 한 문장 말하면 자동 종료 (푸시투토크 방식)
+    let listening = false;
+    rec.onstart = () => { listening = true; onState && onState("listening"); };
+    rec.onend = () => { listening = false; onState && onState("idle"); };
+    rec.onerror = e => { listening = false; onState && onState("error", e.error); };
+    rec.onresult = e => {
+      let fin = "", interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) fin += r[0].transcript; else interim += r[0].transcript;
+      }
+      if (fin.trim()) onText(fin.trim(), true);
+      else if (interim) onText(interim, false);
+    };
+    return {
+      listening: () => listening,
+      toggle() { if (listening) rec.stop(); else { try { rec.start(); } catch (_) {} } },
+      stop() { if (listening) rec.stop(); },
+    };
+  }
+
+  // ---------- 대화 (LLM 응답 — 로컬 서버 전용) ----------
+  // 반환: {reply, emotion}. emotion 은 EMOTIONS 키 중 하나(LLM 판단). 실패 시 throw.
+  async function chat(text, history) {
+    const res = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, history: history || [] }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    return res.json();
+  }
+
   // ---------- 드래그앤드랍 캐릭터 생성: 어노테이션 캡처 UI (4클릭 상태머신) ----------
   // ① 왼눈 ② 오른눈 ③ 입중심 클릭 → ④ 입 드래그. cv/ctx: 2D 오버레이 캔버스·컨텍스트.
   // needDataUrl: puppet(서버 POST에 b64 필요) true / docs false. onCreate(annot, name, done):
@@ -513,5 +554,6 @@ window.AvatarCore = (() => {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, bindStatus, makeAnnotator,
+    makeMic, chat,
   };
 })();

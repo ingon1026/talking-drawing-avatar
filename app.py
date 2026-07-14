@@ -157,6 +157,25 @@ def speak_rt(req: SpeakRtReq):
     return {"job_id": job_id}
 
 
+class ChatReq(BaseModel):
+    text: str
+    history: list[dict] = []   # [{"role": "user"|"assistant", "content": str}, ...] 최근 턴
+
+
+@app.post("/api/chat")
+def chat(req: ChatReq):
+    """사용자 발화 → LLM 응답 {reply, emotion}. 발화(speak_rt)는 클라이언트가 이어서 호출."""
+    if not req.text.strip():
+        raise HTTPException(400, "빈 입력입니다.")
+    try:
+        import llm_source  # lazy: 모듈·모델은 첫 대화 때 로드
+        return llm_source.chat(req.text, req.history)
+    except ModuleNotFoundError:
+        raise HTTPException(503, "대화 기능이 아직 설치되지 않았습니다 (llm_source.py 없음).")
+    except Exception as e:
+        raise HTTPException(503, f"대화 모델을 쓸 수 없습니다: {e}")
+
+
 class CharacterCreateReq(BaseModel):
     name: str = "내 캐릭터"
     image_b64: str            # dataURL 또는 base64
@@ -245,6 +264,7 @@ def health():
         "image": img.name if img else None,
         "joyvasa_ready": (ROOT / "JoyVASA").exists(),
         "a2f": (ROOT / "Audio2Face-3D-SDK").exists(),
+        "chat": (ROOT / "llm_source.py").exists(),
     }
 
 
