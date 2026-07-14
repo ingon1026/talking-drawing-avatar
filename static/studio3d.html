@@ -92,6 +92,7 @@ try {
 
 const $ = id => document.getElementById(id);
 const audio = $("audio");
+const setStatus = AvatarCore.bindStatus($("status"));
 
 // ---------- Three.js 씬 ----------
 const canvas = $("cv");
@@ -158,14 +159,14 @@ addEventListener("pointermove", e => {
 let anim = null, smooth = {};
 const W = k => smooth[k] || 0;
 let nod = 0;
-let gazeSX = 0, gazeSY = 0;  // 커서 시선(평활)
 
 const cursor = AvatarCore.makeCursorTracker(canvas);
+const gaze = AvatarCore.makeGaze(cursor, { mulX: 0.8, mulY: 0.5 });
 const blinker = AvatarCore.makeBlink({
   autoBlink: () => $("autoBlink").checked,
   intervalMs: () => 3500, duration: 150, jitter: 0.8,
 });
-const emo = AvatarCore.makeEmotion("#76b900");
+const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#76b900");
 $("blinkBtn").onclick = () => blinker.trigger();
 
 // ---------- 렌더 루프 ----------
@@ -178,8 +179,7 @@ function render(now) {
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k of ["browinnerup", "browouterupleft", "browouterupright"]) smooth[k] = Math.max(smooth[k] || 0, browOv);
-  const emotion = emo.current();
-  for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]);
+  emo.applyMax(smooth);
   const blink = Math.max(blinker.value(now), +$("ovBlink").value, W("eyeblinkleft"), W("eyeblinkright"));
 
   // 모프 적용 (실제 3D 근육)
@@ -188,13 +188,8 @@ function render(now) {
     inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
   }
 
-  // 시선 우선순위: 슬라이더 > 엔진 채널 > 마우스 커서 추적 (평활)
-  const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
-  const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
-  const sl = +$("ovGaze").value;
-  gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursor.gx * 0.8)) - gazeSX) * 0.15;
-  gazeSY += ((chY || cursor.gy * 0.5) - gazeSY) * 0.15;
-  for (const e of eyes) e.rotation.set(gazeSY * 0.3, gazeSX * 0.4, 0);
+  const [gsx, gsy] = gaze(+$("ovGaze").value, W);  // 슬라이더 > 엔진 채널 > 커서
+  for (const e of eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
 
   // 머리: 사용자 드래그 + 발화 중 미세 끄덕임 + 엔진 head pose(있을 때만 — 현 체크포인트는 미출력)
   nod = 0.85 * nod + 0.15 * W("jawopen");
@@ -221,10 +216,7 @@ $("form").onsubmit = async e => {
   $("send").disabled = true;
   setStatus("생성 중…");
   try {
-    const r = await AvatarCore.speakRT({ text, voice: $("voice").value, engine: $("engine").value, pollMs: 300 });
-    anim = { fps: r.fps, frames: r.frames, head: r.head, index: r.names.map((n, i) => [AvatarCore.norm(n), i]) };
-    audio.src = r.audio_url;
-    await audio.play();
+    await AvatarCore.speakFlow({ text, voice: $("voice").value, engine: $("engine").value, audioEl: audio, onAnim: a => { anim = a; } });
     setStatus("");
   } catch (err) {
     setStatus(err.message, true);
@@ -232,12 +224,6 @@ $("form").onsubmit = async e => {
     $("send").disabled = false;
   }
 };
-
-function setStatus(msg, isError) {
-  const s = $("status");
-  s.textContent = msg;
-  s.className = isError ? "error" : "";
-}
 </script>
 </body>
 </html>

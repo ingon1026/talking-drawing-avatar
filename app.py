@@ -265,3 +265,12 @@ def studio3d():
 app.mount("/media", StaticFiles(directory=OUT), name="media")
 app.mount("/characters", StaticFiles(directory=ROOT / "assets_characters"), name="characters")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+
+# avatar_core.js: static/ 원본과 docs/ 복사본 해시 비교 — 불일치·누락 시 경고만(기동 계속)
+try:
+    import hashlib
+    _h = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in ("static/avatar_core.js", "docs/avatar_core.js")}
+    if len(set(_h.values())) > 1:
+        print("⚠️  avatar_core.js static/·docs/ 사본 불일치 — `cp static/avatar_core.js docs/` 로 동기화 필요")
+except OSError as e:
+    print(f"⚠️  avatar_core.js 동기화 점검 건너뜀: {e}")

@@ -3,7 +3,7 @@
  *
  * docs/avatar_core.js 는 이 파일의 복사본이다 — 수정 후 반드시
  *     cp static/avatar_core.js docs/
- * 로 동기화할 것. (three.module.js 를 static/vendor·docs/vendor 양쪽에 두는 것과 같은 선례)
+ * 로 동기화할 것. (app.py 기동 시 두 사본 해시를 비교해 불일치를 경고한다.)
  *
  * 일반 <script src> 로 로드되는 전역 스크립트이며 window.AvatarCore 를 정의한다.
  * 소비 페이지보다 먼저 로드할 것. 팩토리 함수들은 정의 시점에 DOM/전역에 접근하지 않고,
@@ -11,8 +11,12 @@
  */
 window.AvatarCore = (() => {
 
-  // ---------- 순수 유틸 ----------
+  // ---------- 내부 유틸 ----------
   const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
+  const avgLR = (W, base) => (W(base + "left") + W(base + "right")) / 2;   // 좌우 채널 평균
+  const roundness = W => Math.max(W("mouthpucker"), W("mouthfunnel"));       // 오므림 세기
+  const POLL_MS = 350;                                                       // 잡 폴링 간격
+  const WARP_JAW_G = Math.exp(-(38 * 38) / (2 * 55 * 55));                   // jaw 변위장을 입 앵커(38px 위)에서 평가한 가우시안 (시그마 55 = 워프 셰이더와 동일)
 
   // 텍스트 감정 추론 (발화 시 자동 프리셋 — 세 페이지 동일 규칙)
   function inferEmotion(text) {
@@ -20,7 +24,7 @@ window.AvatarCore = (() => {
     if (/[ㅠㅜ]{2,}|슬프|슬퍼|우울|눈물|아파|힘들|속상|외로/.test(text)) return "sad";
     if (/화나|화가|짜증|열받|분노|싫어|그만해/.test(text)) return "angry";
     if (/헉|깜짝|놀라|대박|세상에|믿을 수|[?!]{2,}/.test(text)) return "surprise";
-    if (/ㅋㅋ|ㅎㅎ|하하|호호|신나|행복|좋아|좋다|최고|사랑|기뻐|반가|!/.test(text)) return "joy";
+    if (/신나|행복|좋아|좋다|최고|사랑|기뻐|반가|!/.test(text)) return "joy";  // ㅋㅋ/ㅎㅎ/하하/호호는 첫 줄이 선점하므로 여기선 뺌
     return null;
   }
 
@@ -49,18 +53,19 @@ window.AvatarCore = (() => {
     surprise: { browinnerup: 0.6, browouterupleft: 0.75, browouterupright: 0.75, eyewideleft: 0.8, eyewideright: 0.8, jawopen: 0.3 },
   };
 
-  // 감정 상태 + #emotions 버튼 배선. activeColor 페이지별(2D #5b8cff / 3D #76b900).
-  function makeEmotion(activeColor) {
+  // 감정 상태 + 버튼 배선. buttons/activeColor 는 페이지가 주입(2D #5b8cff / 3D #76b900).
+  function makeEmotion(buttons, activeColor) {
     let emotion = EMOTIONS.neutral;
     function setEmotion(key) {
       emotion = EMOTIONS[key] || EMOTIONS.neutral;
-      document.querySelectorAll("#emotions button").forEach(x =>
-        x.style.background = x.dataset.emo === key ? activeColor : "#2a2a35");
+      buttons.forEach(x => x.style.background = x.dataset.emo === key ? activeColor : "#2a2a35");
     }
-    document.querySelectorAll("#emotions button").forEach(b => {
-      b.onclick = () => setEmotion(b.dataset.emo);
-    });
-    return { setEmotion, current: () => emotion };
+    buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });
+    return {
+      setEmotion,
+      // 감정 프리셋을 현재 평활값에 max-결합
+      applyMax(smooth) { for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]); },
+    };
   }
 
   // ---------- 깜빡임 (버튼 + 자동) ----------
@@ -81,7 +86,7 @@ window.AvatarCore = (() => {
   }
 
   // ---------- 커서 시선 추적 ----------
-  // el 의 pointermove/leave → {gx, gy} (-1..1). 프레임별 평활·엔진채널 결합은 페이지 인라인(상이).
+  // el 의 pointermove/leave → {gx, gy} (-1..1). 프레임별 평활·엔진채널 결합은 makeGaze 또는 페이지 인라인.
   function makeCursorTracker(el) {
     const s = { gx: 0, gy: 0 };
     el.addEventListener("pointermove", e => {
@@ -91,6 +96,20 @@ window.AvatarCore = (() => {
     });
     el.addEventListener("pointerleave", () => { s.gx = 0; s.gy = 0; });
     return s;
+  }
+
+  // ---------- 시선 결합 (슬라이더 > 엔진 채널 > 커서) + 0.15 평활 ----------
+  // cursor: makeCursorTracker 결과, mulX/mulY: 커서 배율(puppet 0.9/0.6, studio3d 0.8/0.5).
+  // 반환: (sliderVal, W) => [gx, gy]. docs 는 커서 전용이라 이 팩토리 대신 인라인 유지.
+  function makeGaze(cursor, { mulX, mulY }) {
+    let gx = 0, gy = 0;
+    return (sliderVal, W) => {
+      const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
+      const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
+      gx += ((Math.abs(sliderVal) > 0.01 ? sliderVal : (chX || cursor.gx * mulX)) - gx) * 0.15;
+      gy += ((chY || cursor.gy * mulY) - gy) * 0.15;
+      return [gx, gy];
+    };
   }
 
   // ---------- 머리 워블 (2D: 발화 끄덕임 nod + 느린 표류 wander + 잔잔한 사인) ----------
@@ -116,17 +135,16 @@ window.AvatarCore = (() => {
   }
 
   // ---------- 스프라이트 입모양 선택기 (개방도 우선 + 히스테리시스) ----------
-  // targetMouth 는 puppet superset — docs 발화경로에서 mouthpress·mouthstretch=0 이라 정확히 환원된다.
-  // 크로스페이드 렌더는 페이지별(draw 함수 상이)이라 상태(prevMouth/switchAt/FADE_MS)만 노출.
-  function makeMouthPicker() {
+  // W 를 생성 시 주입. targetMouth 는 puppet superset — docs 발화경로에서 mouthpress·mouthstretch=0 이라 정확히 환원.
+  // pick(now) → {cur, prev, fade}: 크로스페이드 상태를 계산해 반환(내부 상태는 노출 안 함).
+  function makeMouthPicker(W) {
     let curMouth = "closed", prevMouth = null, switchAt = 0, mouthCand = "closed", candSince = 0;
     const FADE_MS = 90;
-    function targetMouth(W) {
+    function targetMouth() {
       const jaw = W("jawopen");
-      const round = Math.max(W("mouthpucker"), W("mouthfunnel"));
-      const wide = Math.max((W("mouthsmileleft") + W("mouthsmileright")) / 2,
-                            (W("mouthstretchleft") + W("mouthstretchright")) / 2);
-      const press = (W("mouthpressleft") + W("mouthpressright")) / 2;
+      const round = roundness(W);
+      const wide = Math.max(avgLR(W, "mouthsmile"), avgLR(W, "mouthstretch"));
+      const press = avgLR(W, "mouthpress");
       if (jaw < 0.06) return (press > 0.2 || W("mouthclose") > 0.25) ? "M" : "closed";
       if (round > wide + 0.08) return jaw > 0.28 ? "O" : "U";
       if (jaw > 0.42) return "A";
@@ -134,39 +152,33 @@ window.AvatarCore = (() => {
       return jaw < 0.14 ? "closed" : "E";
     }
     return {
-      FADE_MS,
-      pick(now, W) {
-        const t = targetMouth(W);
+      pick(now) {
+        const t = targetMouth();
         if (t !== mouthCand) { mouthCand = t; candSince = now; }
         if (mouthCand !== curMouth && now - candSince >= 70) {  // 70ms 유지 시에만 전환
           prevMouth = curMouth; switchAt = now; curMouth = mouthCand;
         }
-        return curMouth;
+        return { cur: curMouth, prev: prevMouth, fade: Math.min(1, (now - switchAt) / FADE_MS) };
       },
-      get prevMouth() { return prevMouth; },
-      get switchAt() { return switchAt; },
     };
   }
 
   // ---------- 벡터 입 (근육 채널 → 윤곽 제어점 연속 변형) ----------
-  // puppet 의 superset 공식으로 통합. 두 2D 페이지에서 갈렸던 두 지점을 회귀 없이 흡수:
-  //  · 닫힘곡선 제어점 압력 = max(근육 press, mouthclose*0.5) — puppet(press 위주)·docs(mouthclose 위주)
-  //    양쪽의 기존 값을 그대로 재현하며, openH 폐합 항이 이미 쓰는 max(press, close) 패턴과 일관.
-  //  · 입꼬리 frown 반영 — puppet 에만 있던 항. docs 슬픔 감정이 세팅해 두고도 버리던 채널을 살리는 개선.
+  // puppet 의 superset 공식으로 통합. 닫힘곡선 제어점 압력 = max(근육 press, mouthclose*0.5) 로
+  // puppet(press 위주)·docs(mouthclose 위주) 양쪽 기존 픽셀을 회귀 없이 재현. frown 반영은 puppet 항.
   function drawVectorMouth(ctx, W, manifest, jawDy) {
     const st = manifest.mouthStyle || {};
     const [mcx, mcy0] = manifest.mouthCenter || [256, 340];
     const jaw = W("jawopen");
-    const round = Math.max(W("mouthpucker"), W("mouthfunnel"));
-    const pressM = (W("mouthpressleft") + W("mouthpressright")) / 2;   // 근육 압력 (openH 폐합용)
-    const upperUp = (W("mouthupperupleft") + W("mouthupperupright")) / 2;
-    const lowerDown = (W("mouthlowerdownleft") + W("mouthlowerdownright")) / 2;
+    const round = roundness(W);
+    const pressM = avgLR(W, "mouthpress");        // 근육 압력 (openH 폐합용)
+    const upperUp = avgLR(W, "mouthupperup");
+    const lowerDown = avgLR(W, "mouthlowerdown");
     const smL = W("mouthsmileleft"), smR = W("mouthsmileright");
     const frL = W("mouthfrownleft"), frR = W("mouthfrownright");
     // 닫힘곡선 제어점 압력: 근육 press 와 mouthclose 유래 압력 중 강한 쪽 (하이브리드 — puppet·docs 양쪽 회귀 0)
     const pressCurve = Math.max(pressM, W("mouthclose") * 0.5);
 
-    // 폐합은 press(근육)·mouthclose(폐쇄) 중 강한 쪽
     const openH = Math.max(0, jaw * 58 + lowerDown * 10 - Math.max(pressM * 8, W("mouthclose") * 30));
     const wBase = st.width || 34;
     const halfL = wBase * (1 + 0.45 * W("mouthstretchleft") + 0.3 * smL - 0.5 * round);
@@ -209,6 +221,21 @@ window.AvatarCore = (() => {
     ctx.stroke(path);
   }
 
+  // ---------- 스프라이트 입 크로스페이드 ----------
+  // 반드시 스프라이트 모드 브랜치에서만(프레임당 1회) 호출 — pick() 이 히스테리시스 상태를 전진시킴.
+  // 전환 중(fade<1)이고 이전 스프라이트가 존재하면 α로 겹쳐 페이드, 아니면 현재만. jawDy 만큼 세로 이동.
+  function drawSpriteMouth(ctx, parts, picker, now, jawDy) {
+    const { cur, prev, fade } = picker.pick(now);
+    const drawM = name => parts[name] && ctx.drawImage(parts[name], 0, jawDy);
+    if (fade < 1 && prev && parts["mouth_" + prev]) {
+      ctx.globalAlpha = 1 - fade; drawM("mouth_" + prev);
+      ctx.globalAlpha = fade; drawM("mouth_" + cur);
+      ctx.globalAlpha = 1;
+    } else {
+      drawM("mouth_" + cur);
+    }
+  }
+
   // ---------- WebGL 얼굴 워핑 (base 정점 변위 그리드) ----------
   // 세분 평면(512×512, 48세그) + base 텍스처를 직교카메라로 픽셀 정합 렌더. 정점셰이더가 근육 채널값
   // (uniform)으로 가우시안 변위장을 적용해 턱·볼을 미세 변형. 색공간은 NoColorSpace + 순수 셰이더
@@ -219,6 +246,11 @@ window.AvatarCore = (() => {
     return {
       ready: false,
       T: null, renderer: null, scene: null, camera: null, material: null, texture: null,
+      // 입 오버레이 세로 이동: 워프 ON이면 jaw 변위장을 입 앵커에서 평가한 값(≈11px·jaw)으로 대체해
+      // base 워프와 정확히 함께 움직이게 함(이중 이동 방지). OFF면 기존 jawDrop 사용. (38/55가 워프 시그마 결합)
+      jawOverlayDy(jaw, warpOn, manifest) {
+        return warpOn ? 14 * jaw * WARP_JAW_G : jaw * (manifest.jawDrop || 8);
+      },
       vert: `
         uniform vec2 uJawC, uCornerL, uCornerR;
         uniform float uJaw, uSmileL, uSmileR, uRound, uFrownL, uFrownR;
@@ -303,7 +335,7 @@ window.AvatarCore = (() => {
         u.uJaw.value = W("jawopen");
         u.uSmileL.value = W("mouthsmileleft");
         u.uSmileR.value = W("mouthsmileright");
-        u.uRound.value = Math.max(W("mouthpucker"), W("mouthfunnel"));
+        u.uRound.value = roundness(W);
         u.uFrownL.value = W("mouthfrownleft");
         u.uFrownR.value = W("mouthfrownright");
         this.renderer.render(this.scene, this.camera);
@@ -311,10 +343,8 @@ window.AvatarCore = (() => {
     };
   }
 
-  // ---------- 발화 요청 → 잡 폴링 → 결과 ----------
-  // puppet·studio3d 공용(docs 제외). pollMs 페이지별(400 / 300). result({audio_url,fps,names,frames,head?})
-  // 반환; anim 조립·audio 재생·감정 세팅은 페이지가 담당.
-  async function speakRT({ text, voice, engine, pollMs }) {
+  // ---------- 발화 요청 → 잡 폴링 → 결과 (내부) ----------
+  async function speakRT({ text, voice, engine }) {
     const res = await fetch("/api/speak_rt", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, voice, engine }),
@@ -325,10 +355,28 @@ window.AvatarCore = (() => {
     while (true) {
       job = await fetch(`/api/jobs/${job_id}`).then(r => r.json());
       if (job.status === "done" || job.status === "error") break;
-      await new Promise(r => setTimeout(r, pollMs));
+      await new Promise(r => setTimeout(r, POLL_MS));
     }
     if (job.status === "error") throw new Error(job.error);
     return job.result;
+  }
+
+  // ---------- 발화 플로우 (puppet·studio3d 공용) ----------
+  // speakRT → anim 조립(head 포함, 2D는 미사용이라 무해) → onAnim(재생 전 반영) → audio.src → play.
+  // onAnim 은 play 로딩 창 동안 렌더 루프가 최신 anim 을 보게 하려고 src/play 이전에 호출(원본 순서 유지).
+  // 페이지 핸들러는 autoEmo·버튼 disable·에러 setStatus 만 담당.
+  async function speakFlow({ text, voice, engine, audioEl, onAnim }) {
+    const r = await speakRT({ text, voice, engine });
+    const anim = { fps: r.fps, frames: r.frames, head: r.head, index: r.names.map((n, i) => [norm(n), i]) };
+    if (onAnim) onAnim(anim);
+    audioEl.src = r.audio_url;
+    await audioEl.play();
+    return anim;
+  }
+
+  // ---------- 상태줄 setter ----------
+  function bindStatus(el) {
+    return (msg, isError) => { el.textContent = msg; el.className = isError ? "error" : ""; };
   }
 
   // ---------- 드래그앤드랍 캐릭터 생성: 어노테이션 캡처 UI (4클릭 상태머신) ----------
@@ -413,7 +461,7 @@ window.AvatarCore = (() => {
 
   return {
     norm, inferEmotion, smoothStep, weightsFromAnim,
-    EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeHeadWander,
-    makeMouthPicker, drawVectorMouth, makeWarp, speakRT, makeAnnotator,
+    EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
+    makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, bindStatus, makeAnnotator,
   };
 })();

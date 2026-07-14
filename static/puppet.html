@@ -104,8 +104,7 @@
 const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d"), audio = $("audio");
 const glCanvas = $("gl"), shakeEl = $("shake"), warpToggle = $("warpToggle");
-// jaw 변위장을 입 앵커(mouthCenter, jaw 중심에서 38px 위)에서 평가한 가우시안 값 — 오버레이 보정용
-const WARP_JAW_G = Math.exp(-(38 * 38) / (2 * 55 * 55));
+const setStatus = AvatarCore.bindStatus($("status"));
 
 // ---------- 캐릭터 에셋 로드 (파일명 규칙 기반) ----------
 const PART_FILES = ["base", "brow_L", "brow_R", "eye_L_open", "eye_R_open",
@@ -154,21 +153,21 @@ $("delChar").onclick = async () => {
 // ---------- 블렌드셰이프 상태 ----------
 let anim = null;          // {fps, frames, index(names→col)} 재생 중인 발화
 let smooth = {};          // 지수 평활된 현재 가중치
-let gazeSX = 0, gazeSY = 0;  // 커서 시선(평활)
 const W = k => smooth[k] || 0;
 
 const stage = document.querySelector(".stage");
 
 // ---------- 공유 렌더 코어 인스턴스 (avatar_core.js) ----------
-const emo = AvatarCore.makeEmotion("#5b8cff");
+const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#5b8cff");
 const blinker = AvatarCore.makeBlink({
   autoBlink: () => $("autoBlink").checked,
   intervalMs: () => +$("blinkInterval").value * 1000,
   duration: 140, jitter: 0.6,
 });
 const cursor = AvatarCore.makeCursorTracker(stage);
+const gaze = AvatarCore.makeGaze(cursor, { mulX: 0.9, mulY: 0.6 });
 const headWander = AvatarCore.makeHeadWander();
-const mouthPicker = AvatarCore.makeMouthPicker();
+const mouthPicker = AvatarCore.makeMouthPicker(W);
 const warp = AvatarCore.makeWarp({
   threeUrl: "/static/vendor/three.module.js", glCanvas,
   getParts: () => parts, getManifest: () => manifest, W,
@@ -226,8 +225,7 @@ function render(now) {
   const smileOv = +$("ovSmile").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k in ov) smooth[k] = Math.max(smooth[k] || 0, ov[k]);
-  const emotion = emo.current();
-  for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]);
+  emo.applyMax(smooth);
   const blink = Math.max(blinker.value(now), +$("ovBlink").value,
                          Math.max(W("eyeblinkleft"), W("eyeblinkright")));
 
@@ -252,32 +250,15 @@ function render(now) {
     draw("eye_L_closed"); draw("eye_R_closed");
   } else {
     draw("eye_L_open"); draw("eye_R_open");
-    // 시선 우선순위: 슬라이더 > 엔진 채널 > 마우스 커서 추적
-    const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
-    const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
-    const sl = +$("ovGaze").value;
-    gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursor.gx * 0.9)) - gazeSX) * 0.15;
-    gazeSY += ((chY || cursor.gy * 0.6) - gazeSY) * 0.15;
-    draw("pupil_L", gazeSX * manifest.pupilRange, gazeSY * manifest.pupilRange);
-    draw("pupil_R", gazeSX * manifest.pupilRange, gazeSY * manifest.pupilRange);
+    const [gsx, gsy] = gaze(+$("ovGaze").value, W);  // 슬라이더 > 엔진 채널 > 커서
+    draw("pupil_L", gsx * manifest.pupilRange, gsy * manifest.pupilRange);
+    draw("pupil_R", gsx * manifest.pupilRange, gsy * manifest.pupilRange);
   }
-  // 입 오버레이 세로 이동: 워프 ON이면 jaw 변위장을 입 앵커에서 평가한 값(≈11px·jaw)으로 대체해
-  // base 워프와 정확히 함께 움직이게 함(이중 이동 방지). OFF면 기존 jawDrop 사용.
-  const jawDy = warpOn ? 14 * W("jawopen") * WARP_JAW_G : W("jawopen") * (manifest.jawDrop || 8);
+  const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth) {
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);  // 근육 채널 직접 구동 (기본)
   } else {
-    // 스프라이트 캐릭터용: 전환 시 크로스페이드로 부드럽게 (스케일 없음, jaw 오프셋만)
-    const m = mouthPicker.pick(now, W);
-    const dyM = jawDy;
-    const f = Math.min(1, (now - mouthPicker.switchAt) / mouthPicker.FADE_MS);
-    if (f < 1 && mouthPicker.prevMouth && parts["mouth_" + mouthPicker.prevMouth]) {
-      ctx.globalAlpha = 1 - f; draw("mouth_" + mouthPicker.prevMouth, 0, dyM);
-      ctx.globalAlpha = f; draw("mouth_" + m, 0, dyM);
-      ctx.globalAlpha = 1;
-    } else {
-      draw("mouth_" + m, 0, dyM);
-    }
+    AvatarCore.drawSpriteMouth(ctx, parts, mouthPicker, now, jawDy);  // 스프라이트 크로스페이드
   }
 }
 requestAnimationFrame(render);
@@ -294,10 +275,7 @@ $("form").onsubmit = async e => {
   $("send").disabled = true;
   setStatus("생성 중…");
   try {
-    const r = await AvatarCore.speakRT({ text, voice: $("voice").value, engine: $("engine").value, pollMs: 400 });
-    anim = { fps: r.fps, frames: r.frames, index: r.names.map((n, i) => [AvatarCore.norm(n), i]) };
-    audio.src = r.audio_url;
-    await audio.play();
+    await AvatarCore.speakFlow({ text, voice: $("voice").value, engine: $("engine").value, audioEl: audio, onAnim: a => { anim = a; } });
     setStatus("");
   } catch (err) {
     setStatus(err.message, true);
@@ -305,12 +283,6 @@ $("form").onsubmit = async e => {
     $("send").disabled = false;
   }
 };
-
-function setStatus(msg, isError) {
-  const s = $("status");
-  s.textContent = msg;
-  s.className = isError ? "error" : "";
-}
 
 warp.init();   // WebGL 워프 초기화 (실패 시 조용히 폴백). loadCharacter와 경쟁은 양방향 처리됨.
 initCharacters();
