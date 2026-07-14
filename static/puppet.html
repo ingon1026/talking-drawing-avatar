@@ -64,6 +64,7 @@
     <button type="button" class="alt" data-emo="sad">😢 슬픔</button>
     <button type="button" class="alt" data-emo="angry">😠 화남</button>
     <button type="button" class="alt" data-emo="surprise">😲 놀람</button>
+    <label><input type="checkbox" id="autoEmo" checked> 감정 자동</label>
   </div>
 
   <div class="row">
@@ -240,6 +241,12 @@ function acceptFile(file) {
   reader.readAsDataURL(file);
 }
 const stage = document.querySelector(".stage");
+stage.addEventListener("pointermove", e => {  // 시선 커서 추적
+  const r = stage.getBoundingClientRect();
+  cursorGX = ((e.clientX - r.left) / r.width - 0.5) * 2;
+  cursorGY = ((e.clientY - r.top) / r.height - 0.5) * 2;
+});
+stage.addEventListener("pointerleave", () => { cursorGX = 0; cursorGY = 0; });
 stage.addEventListener("dragover", e => e.preventDefault());
 stage.addEventListener("drop", e => { e.preventDefault(); acceptFile(e.dataTransfer.files[0]); });
 $("addChar").onclick = () => $("charFile").click();
@@ -249,6 +256,7 @@ $("charFile").onchange = e => { acceptFile(e.target.files[0]); e.target.value = 
 let anim = null;          // {fps, frames, index(names→col)} 재생 중인 발화
 let smooth = {};          // 지수 평활된 현재 가중치
 let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
+let cursorGX = 0, cursorGY = 0, gazeSX = 0, gazeSY = 0;  // 커서 시선(목표/평활)
 const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
 
 function currentWeights() {
@@ -272,13 +280,24 @@ const EMOTIONS = {
   surprise: { browinnerup: 0.5, browouterupleft: 0.7, browouterupright: 0.7, jawopen: 0.3 },
 };
 let emotion = EMOTIONS.neutral;
+function setEmotion(key) {
+  emotion = EMOTIONS[key] || EMOTIONS.neutral;
+  document.querySelectorAll("#emotions button").forEach(x =>
+    x.style.background = x.dataset.emo === key ? "#5b8cff" : "#2a2a35");
+}
 document.querySelectorAll("#emotions button").forEach(b => {
-  b.onclick = () => {
-    emotion = EMOTIONS[b.dataset.emo];
-    document.querySelectorAll("#emotions button").forEach(x => x.style.background = "#2a2a35");
-    b.style.background = "#5b8cff";
-  };
+  b.onclick = () => setEmotion(b.dataset.emo);
 });
+
+// 텍스트 감정 추론 (발화 시 자동 프리셋 — puppet/docs/studio3d 동일 규칙 유지할 것)
+function inferEmotion(text) {
+  if (/ㅋㅋ|ㅎㅎ|하하|호호|웃겨|웃음/.test(text)) return "joy";  // 웃음이 최우선 신호
+  if (/[ㅠㅜ]{2,}|슬프|슬퍼|우울|눈물|아파|힘들|속상|외로/.test(text)) return "sad";
+  if (/화나|화가|짜증|열받|분노|싫어|그만해/.test(text)) return "angry";
+  if (/헉|깜짝|놀라|대박|세상에|믿을 수|[?!]{2,}/.test(text)) return "surprise";
+  if (/ㅋㅋ|ㅎㅎ|하하|호호|신나|행복|좋아|좋다|최고|사랑|기뻐|반가|!/.test(text)) return "joy";
+  return null;
+}
 
 // ---------- 깜빡임 (버튼 + 자동) ----------
 let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
@@ -531,11 +550,14 @@ function render(now) {
     draw("eye_L_closed"); draw("eye_R_closed");
   } else {
     draw("eye_L_open"); draw("eye_R_open");
-    const gx = +$("ovGaze").value ||
-      (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
-    const gy = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
-    draw("pupil_L", gx * manifest.pupilRange, gy * manifest.pupilRange);
-    draw("pupil_R", gx * manifest.pupilRange, gy * manifest.pupilRange);
+    // 시선 우선순위: 슬라이더 > 엔진 채널 > 마우스 커서 추적
+    const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
+    const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
+    const sl = +$("ovGaze").value;
+    gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursorGX * 0.9)) - gazeSX) * 0.15;
+    gazeSY += ((chY || cursorGY * 0.6) - gazeSY) * 0.15;
+    draw("pupil_L", gazeSX * manifest.pupilRange, gazeSY * manifest.pupilRange);
+    draw("pupil_R", gazeSX * manifest.pupilRange, gazeSY * manifest.pupilRange);
   }
   // 입 오버레이 세로 이동: 워프 ON이면 jaw 변위장을 입 앵커에서 평가한 값(≈11px·jaw)으로 대체해
   // base 워프와 정확히 함께 움직이게 함(이중 이동 방지). OFF면 기존 jawDrop 사용.
@@ -563,6 +585,10 @@ $("form").onsubmit = async e => {
   e.preventDefault();
   const text = $("text").value.trim();
   if (!text) return;
+  if ($("autoEmo").checked) {
+    const emo = inferEmotion(text);
+    if (emo) setEmotion(emo);
+  }
   $("send").disabled = true;
   setStatus("생성 중…");
   try {

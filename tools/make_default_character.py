@@ -70,8 +70,8 @@ def make_base():
     for cx in (132, 380):
         ellipse_at(d, cx, 268, 30, 44, fill=SKIN, outline=LINE, width=5)
     # 앞머리: 둥근 갈래 + 하이라이트 (눈썹 위에서 끝나게)
-    d.chord((120, 96, 392, 298), 180, 360, fill=HAIR)
-    for cx, cy, w, h in ((168, 194, 74, 50), (232, 198, 78, 52), (300, 196, 76, 50), (352, 188, 62, 46)):
+    d.chord((120, 96, 392, 290), 180, 360, fill=HAIR)
+    for cx, cy, w, h in ((168, 186, 74, 46), (232, 190, 78, 48), (300, 188, 76, 46), (352, 180, 62, 42)):
         ellipse_at(d, cx, cy, w, h, fill=HAIR)
     d.arc((168, 126, 330, 212), 205, 320, fill=HAIR_HI, width=10)  # 머릿결 하이라이트
     # 볼 홍조
@@ -84,7 +84,7 @@ def make_base():
 
 def make_brow(cx):
     img, d = canvas()
-    d.arc((cx - 30, 222, cx + 30, 250), 200, 340, fill=LINE, width=8)
+    d.arc((cx - 30, 226, cx + 30, 254), 200, 340, fill=LINE, width=8)
     return img
 
 
