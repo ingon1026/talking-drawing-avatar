@@ -84,6 +84,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 ├─ blendshape_source.py    # 음성 → ARKit 52ch (NeuroSync, 폴백 내장)
 ├─ a2f_source.py           # 음성 → ARKit 52ch (NVIDIA A2F-3D)
 ├─ character_builder.py    # 그림 → 퍼펫 캐릭터 (눈/입 분리·베이스 생성)
+├─ static/avatar_core.js   # 세 페이지 공유 렌더 코어 (docs/avatar_core.js 는 복사본 — 수정 후 `cp static/avatar_core.js docs/` 로 동기화)
 ├─ static/puppet.html      # 실시간 퍼펫 렌더러 + 제어 패널
 ├─ docs/                   # GitHub Pages 정적 데모 (서버리스 버전)
 ├─ assets_characters/      # 캐릭터 에셋 (base/눈 스프라이트/manifest)

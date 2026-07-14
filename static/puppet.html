@@ -99,6 +99,7 @@
   <audio id="audio"></audio>
 </main>
 
+<script src="/static/avatar_core.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d"), audio = $("audio");
@@ -150,388 +151,89 @@ $("delChar").onclick = async () => {
   else setStatus((await res.json()).detail || "삭제 실패", true);
 };
 
-// ---------- 드래그앤드랍 캐릭터 생성 (4단계 어노테이션) ----------
-let annot = null;  // {img, iw, ih, s, ox, oy, step, eyeL, eyeR, mouthC, box, dragStart, dataUrl}
-const ANNOT_STEPS = ["① 왼쪽 눈을 클릭하세요", "② 오른쪽 눈을 클릭하세요",
-                     "③ 입 중심을 클릭하세요", "④ 입 전체를 드래그로 감싸세요"];
-
-function startAnnot(dataUrl) {
-  const img = new Image();
-  img.onload = () => {
-    const s = Math.min(512 / img.width, 512 / img.height);
-    annot = { img, iw: img.width, ih: img.height, s,
-              ox: (512 - img.width * s) / 2, oy: (512 - img.height * s) / 2,
-              step: 0, dataUrl };
-    setStatus(ANNOT_STEPS[0] + "  (ESC로 취소)");
-  };
-  img.src = dataUrl;
-}
-
-function toOrig(e) {
-  const r = cv.getBoundingClientRect();
-  const cx = (e.clientX - r.left) * 512 / r.width;
-  const cyy = (e.clientY - r.top) * 512 / r.height;
-  return [(cx - annot.ox) / annot.s, (cyy - annot.oy) / annot.s];
-}
-
-function drawAnnot() {
-  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 512, 512);
-  ctx.drawImage(annot.img, annot.ox, annot.oy, annot.iw * annot.s, annot.ih * annot.s);
-  const dot = (p, color) => {
-    if (!p) return;
-    ctx.beginPath();
-    ctx.arc(annot.ox + p[0] * annot.s, annot.oy + p[1] * annot.s, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
-  };
-  dot(annot.eyeL, "#00a2ff"); dot(annot.eyeR, "#00a2ff"); dot(annot.mouthC, "#ff5b5b");
-  if (annot.box) {
-    const [x0, y0, x1, y1] = annot.box;
-    ctx.strokeStyle = "#ff5b5b"; ctx.lineWidth = 2;
-    ctx.strokeRect(annot.ox + x0 * annot.s, annot.oy + y0 * annot.s,
-                   (x1 - x0) * annot.s, (y1 - y0) * annot.s);
-  }
-}
-
-cv.addEventListener("pointerdown", e => {
-  if (!annot) return;
-  const p = toOrig(e);
-  if (annot.step === 0) { annot.eyeL = p; annot.step = 1; }
-  else if (annot.step === 1) { annot.eyeR = p; annot.step = 2; }
-  else if (annot.step === 2) { annot.mouthC = p; annot.step = 3; }
-  else if (annot.step === 3) { annot.dragStart = p; }
-  setStatus(ANNOT_STEPS[Math.min(annot.step, 3)] + "  (ESC로 취소)");
-});
-cv.addEventListener("pointermove", e => {
-  if (!annot || annot.step !== 3 || !annot.dragStart) return;
-  const p = toOrig(e), s = annot.dragStart;
-  annot.box = [Math.min(s[0], p[0]), Math.min(s[1], p[1]), Math.max(s[0], p[0]), Math.max(s[1], p[1])];
-});
-cv.addEventListener("pointerup", async e => {
-  if (!annot || annot.step !== 3 || !annot.box) return;
-  if (annot.box[2] - annot.box[0] < 5) { annot.dragStart = null; return; }
-  const name = prompt("캐릭터 이름:", "내 캐릭터");
-  if (name === null) { annot.dragStart = null; annot.box = null; return; }
-  const eyeR = Math.max(6, 0.03 * Math.max(annot.iw, annot.ih));
-  const body = {
-    name, image_b64: annot.dataUrl,
-    eye_l: [...annot.eyeL, eyeR], eye_r: [...annot.eyeR, eyeR],
-    mouth_box: annot.box, mouth_center: annot.mouthC,
-  };
-  setStatus("캐릭터 생성 중…");
-  try {
-    const res = await fetch("/api/characters/create", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-    const { id } = await res.json();
-    annot = null;
-    await initCharacters(id);
-    setStatus("✅ 캐릭터가 추가됐어요. 문장을 입력해보세요!");
-  } catch (err) { setStatus(err.message, true); }
-});
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && annot) { annot = null; setStatus(""); }
-});
-
-function acceptFile(file) {
-  if (!file || !file.type.startsWith("image/")) return;
-  const reader = new FileReader();
-  reader.onload = () => startAnnot(reader.result);
-  reader.readAsDataURL(file);
-}
-const stage = document.querySelector(".stage");
-stage.addEventListener("pointermove", e => {  // 시선 커서 추적
-  const r = stage.getBoundingClientRect();
-  cursorGX = ((e.clientX - r.left) / r.width - 0.5) * 2;
-  cursorGY = ((e.clientY - r.top) / r.height - 0.5) * 2;
-});
-stage.addEventListener("pointerleave", () => { cursorGX = 0; cursorGY = 0; });
-stage.addEventListener("dragover", e => e.preventDefault());
-stage.addEventListener("drop", e => { e.preventDefault(); acceptFile(e.dataTransfer.files[0]); });
-$("addChar").onclick = () => $("charFile").click();
-$("charFile").onchange = e => { acceptFile(e.target.files[0]); e.target.value = ""; };
-
 // ---------- 블렌드셰이프 상태 ----------
 let anim = null;          // {fps, frames, index(names→col)} 재생 중인 발화
 let smooth = {};          // 지수 평활된 현재 가중치
-let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
-let cursorGX = 0, cursorGY = 0, gazeSX = 0, gazeSY = 0;  // 커서 시선(목표/평활)
-const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
-
-function currentWeights() {
-  const w = {};
-  if (anim && !audio.paused && !audio.ended) {
-    const f = anim.frames[Math.min(Math.floor(audio.currentTime * anim.fps), anim.frames.length - 1)];
-    for (const [key, col] of anim.index) w[key] = f[col];
-  }
-  return w;
-}
-
+let gazeSX = 0, gazeSY = 0;  // 커서 시선(평활)
 const W = k => smooth[k] || 0;
 
-// ---------- 감정 프리셋 (52채널 오버라이드) ----------
-const EMOTIONS = {
-  neutral: {},
-  joy: { mouthsmileleft: 0.6, mouthsmileright: 0.6, cheeksquintleft: 0.4, cheeksquintright: 0.4 },
-  sad: { mouthfrownleft: 0.55, mouthfrownright: 0.55, browinnerup: 0.65 },
-  angry: { browdownleft: 0.75, browdownright: 0.75, mouthfrownleft: 0.3, mouthfrownright: 0.3,
-           mouthpressleft: 0.35, mouthpressright: 0.35, nosesneerleft: 0.4, nosesneerright: 0.4 },
-  surprise: { browinnerup: 0.5, browouterupleft: 0.7, browouterupright: 0.7, jawopen: 0.3 },
-};
-let emotion = EMOTIONS.neutral;
-function setEmotion(key) {
-  emotion = EMOTIONS[key] || EMOTIONS.neutral;
-  document.querySelectorAll("#emotions button").forEach(x =>
-    x.style.background = x.dataset.emo === key ? "#5b8cff" : "#2a2a35");
-}
-document.querySelectorAll("#emotions button").forEach(b => {
-  b.onclick = () => setEmotion(b.dataset.emo);
+const stage = document.querySelector(".stage");
+
+// ---------- 공유 렌더 코어 인스턴스 (avatar_core.js) ----------
+const emo = AvatarCore.makeEmotion("#5b8cff");
+const blinker = AvatarCore.makeBlink({
+  autoBlink: () => $("autoBlink").checked,
+  intervalMs: () => +$("blinkInterval").value * 1000,
+  duration: 140, jitter: 0.6,
 });
-
-// 텍스트 감정 추론 (발화 시 자동 프리셋 — puppet/docs/studio3d 동일 규칙 유지할 것)
-function inferEmotion(text) {
-  if (/ㅋㅋ|ㅎㅎ|하하|호호|웃겨|웃음/.test(text)) return "joy";  // 웃음이 최우선 신호
-  if (/[ㅠㅜ]{2,}|슬프|슬퍼|우울|눈물|아파|힘들|속상|외로/.test(text)) return "sad";
-  if (/화나|화가|짜증|열받|분노|싫어|그만해/.test(text)) return "angry";
-  if (/헉|깜짝|놀라|대박|세상에|믿을 수|[?!]{2,}/.test(text)) return "surprise";
-  if (/ㅋㅋ|ㅎㅎ|하하|호호|신나|행복|좋아|좋다|최고|사랑|기뻐|반가|!/.test(text)) return "joy";
-  return null;
-}
-
-// ---------- 깜빡임 (버튼 + 자동) ----------
-let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
-function blinkNow() { blinkUntil = performance.now() + 140; }
-$("blinkBtn").onclick = blinkNow;
-$("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
-
-function blinkValue(now) {
-  if ($("autoBlink").checked && now > nextAutoBlink) {
-    blinkNow();
-    const iv = +$("blinkInterval").value * 1000;
-    nextAutoBlink = now + iv * (0.7 + Math.random() * 0.6);  // 자연스러운 지터
-  }
-  return now < blinkUntil ? 1 : 0;
-}
-
-// ---------- 입모양 선택 v2: 개방도 우선 + 히스테리시스 ----------
-const mouthFeat = () => ({
-  jaw: W("jawopen"),
-  round: Math.max(W("mouthpucker"), W("mouthfunnel")),
-  wide: Math.max((W("mouthsmileleft") + W("mouthsmileright")) / 2,
-                 (W("mouthstretchleft") + W("mouthstretchright")) / 2),
+const cursor = AvatarCore.makeCursorTracker(stage);
+const headWander = AvatarCore.makeHeadWander();
+const mouthPicker = AvatarCore.makeMouthPicker();
+const warp = AvatarCore.makeWarp({
+  threeUrl: "/static/vendor/three.module.js", glCanvas,
+  getParts: () => parts, getManifest: () => manifest, W,
 });
-function targetMouth() {
-  const { jaw, round, wide } = mouthFeat();
-  const press = (W("mouthpressleft") + W("mouthpressright")) / 2;
-  if (jaw < 0.06) return (press > 0.2 || W("mouthclose") > 0.25) ? "M" : "closed";
-  if (round > wide + 0.08) return jaw > 0.28 ? "O" : "U";
-  if (jaw > 0.42) return "A";
-  if (wide > 0.22) return jaw < 0.16 ? "I" : "E";
-  return jaw < 0.14 ? "closed" : "E";
-}
-let curMouth = "closed", prevMouth = null, switchAt = 0, mouthCand = "closed", candSince = 0;
-const FADE_MS = 90;
-function pickMouth(now) {
-  const t = targetMouth();
-  if (t !== mouthCand) { mouthCand = t; candSince = now; }
-  if (mouthCand !== curMouth && now - candSince >= 70) {  // 70ms 유지 시에만 전환
-    prevMouth = curMouth; switchAt = now; curMouth = mouthCand;
-  }
-  return curMouth;
-}
-
-// ---------- 벡터 입 (근육 채널 → 윤곽 제어점 연속 변형) ----------
-function drawVectorMouth(jawDy) {
-  const st = manifest.mouthStyle || {};
-  const [mcx, mcy0] = manifest.mouthCenter || [256, 340];
-  const jaw = W("jawopen");
-  const round = Math.max(W("mouthpucker"), W("mouthfunnel"));
-  const press = (W("mouthpressleft") + W("mouthpressright")) / 2;
-  const upperUp = (W("mouthupperupleft") + W("mouthupperupright")) / 2;
-  const lowerDown = (W("mouthlowerdownleft") + W("mouthlowerdownright")) / 2;
-  const smL = W("mouthsmileleft"), smR = W("mouthsmileright");
-  const frL = W("mouthfrownleft"), frR = W("mouthfrownright");
-
-  // 폐합은 press(근육)·mouthclose(폐쇄) 중 강한 쪽 — docs 데모와 동일 공식 유지할 것
-  const openH = Math.max(0, jaw * 58 + lowerDown * 10 - Math.max(press * 8, W("mouthclose") * 30));
-  const wBase = st.width || 34;
-  const halfL = wBase * (1 + 0.45 * W("mouthstretchleft") + 0.3 * smL - 0.5 * round);
-  const halfR = wBase * (1 + 0.45 * W("mouthstretchright") + 0.3 * smR - 0.5 * round);
-  const cy = mcy0 + jawDy;
-  const xL = mcx - halfL, xR = mcx + halfR;
-  const yCL = cy - 2 - smL * 12 + frL * 12;   // 입꼬리 좌우 독립 (비대칭 표정)
-  const yCR = cy - 2 - smR * 12 + frR * 12;
-  const yU = cy - openH * 0.38 - upperUp * 8;
-  const yD = cy + openH * 0.62;
-
-  ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round";
-  ctx.strokeStyle = st.line || "#3a2e2a";
-
-  if (openH < 2.5) {  // 다문 입: 압력·미소·찡그림이 곡선 하나에 반영
-    ctx.beginPath();
-    ctx.moveTo(xL, yCL);
-    ctx.quadraticCurveTo(mcx, cy + 5 + press * 4, xR, yCR);
-    ctx.stroke();
-    return;
-  }
-  const path = new Path2D();
-  path.moveTo(xL, yCL);
-  path.quadraticCurveTo(mcx, 2 * yU - (yCL + yCR) / 2, xR, yCR);   // 윗입술
-  path.quadraticCurveTo(mcx, 2 * yD - (yCL + yCR) / 2, xL, yCL);   // 아랫입술
-  path.closePath();
-  ctx.fillStyle = st.fill || "#8a3535"; ctx.fill(path);
-  ctx.save(); ctx.clip(path);
-  if (openH > 7) {  // 윗니
-    ctx.fillStyle = st.teeth || "#ffffff";
-    ctx.fillRect(xL, yU - 2, xR - xL, Math.min(9, openH * 0.32));
-  }
-  if (openH > 18) {  // 혀
-    ctx.fillStyle = st.tongue || "#d97b7b";
-    ctx.beginPath();
-    ctx.ellipse(mcx, yD, (xR - xL) * 0.3, openH * 0.28, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-  ctx.stroke(path);
-}
-
-// ---------- WebGL 얼굴 워핑 (base 정점 변위 그리드) ----------
-// 세분 평면(512×512, 48세그) + base 텍스처를 직교카메라로 픽셀 정합 렌더.
-// 정점셰이더가 근육 채널값(uniform)으로 가우시안 변위장을 적용해 턱·볼을 미세 변형.
-// 색공간은 NoColorSpace + 순수 셰이더 패스스루라 워프 0일 때 2D drawImage와 픽셀 동일.
-const warp = {
-  ready: false,
-  T: null, renderer: null, scene: null, camera: null, material: null, texture: null,
-  vert: `
-    uniform vec2 uJawC, uCornerL, uCornerR;
-    uniform float uJaw, uSmileL, uSmileR, uRound, uFrownL, uFrownR;
-    varying vec2 vUv;
-    float gk(vec2 p, vec2 c, float s){ vec2 d = p - c; return exp(-dot(d, d) / (2.0 * s * s)); }
-    void main() {
-      vUv = uv;
-      vec2 img = vec2(position.x + 256.0, 256.0 - position.y);   // plane → 이미지 픽셀좌표(y down)
-      vec2 disp = vec2(0.0);
-      disp += vec2( 0.0, 14.0) * uJaw    * gk(img, uJawC,    55.0);   // 턱 드롭
-      disp += vec2(-7.0, -9.0) * uSmileL * gk(img, uCornerL, 32.0);   // 좌 입꼬리 (볼 당김)
-      disp += vec2( 7.0, -9.0) * uSmileR * gk(img, uCornerR, 32.0);   // 우 입꼬리
-      disp += vec2( 8.0,  0.0) * uRound  * gk(img, uCornerL, 32.0);   // 오므림 (안쪽)
-      disp += vec2(-8.0,  0.0) * uRound  * gk(img, uCornerR, 32.0);
-      disp += vec2(-3.0,  8.0) * uFrownL * gk(img, uCornerL, 32.0);   // 찡그림 (내림)
-      disp += vec2( 3.0,  8.0) * uFrownR * gk(img, uCornerR, 32.0);
-      vec2 pos = position.xy;
-      pos.x += disp.x; pos.y -= disp.y;                          // 이미지 y-down → plane y-up
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 0.0, 1.0);
-    }`,
-  frag: `
-    uniform sampler2D uTex;
-    varying vec2 vUv;
-    void main() { gl_FragColor = texture2D(uTex, vUv); }`,   // colorspace include 없음 → sRGB 바이트 그대로
-  async init() {
+const annotator = AvatarCore.makeAnnotator({
+  cv, ctx, setStatus, needDataUrl: true,
+  onCreate: async (annot, name, done) => {   // 서버 POST → character_builder 로 캐릭터 생성
+    const eyeR = Math.max(6, 0.03 * Math.max(annot.iw, annot.ih));
+    const body = {
+      name, image_b64: annot.dataUrl,
+      eye_l: [...annot.eyeL, eyeR], eye_r: [...annot.eyeR, eyeR],
+      mouth_box: annot.box, mouth_center: annot.mouthC,
+    };
+    setStatus("캐릭터 생성 중…");
     try {
-      const T = await import("/static/vendor/three.module.js");
-      this.T = T;
-      this.renderer = new T.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: false, premultipliedAlpha: false });
-      // 셰이더 링크 실패는 three가 throw하지 않고 콘솔 로깅만 함 → 이 콜백으로 감지해 폴백 전환.
-      this.renderer.debug.onShaderError = () => { this.ready = false; };
-      this.renderer.setClearColor(0x000000, 0);
-      this.renderer.setSize(512, 512, false);
-      this.scene = new T.Scene();
-      this.camera = new T.OrthographicCamera(-256, 256, 256, -256, -1, 1);
-      this.material = new T.ShaderMaterial({
-        uniforms: {
-          uTex: { value: null },
-          uJawC: { value: new T.Vector2(256, 378) },
-          uCornerL: { value: new T.Vector2(220, 340) },
-          uCornerR: { value: new T.Vector2(292, 340) },
-          uJaw: { value: 0 }, uSmileL: { value: 0 }, uSmileR: { value: 0 },
-          uRound: { value: 0 }, uFrownL: { value: 0 }, uFrownR: { value: 0 },
-        },
-        vertexShader: this.vert, fragmentShader: this.frag, transparent: true, side: T.DoubleSide,
+      const res = await fetch("/api/characters/create", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
-      this.scene.add(new T.Mesh(new T.PlaneGeometry(512, 512, 48, 48), this.material));
-      this.ready = true;
-      this.setCharacter();   // 경쟁 처리: base가 이미 로드됐으면 여기서 텍스처 설정
-      // init 시 강제 1회 렌더 → 셰이더 컴파일/링크를 지금 유발. 실패하면 throw(catch) 또는
-      // onShaderError가 ready=false로 내려 렌더 루프가 base를 2D로 그리는 폴백이 확실히 작동.
-      this.renderer.render(this.scene, this.camera);
-    } catch (e) {
-      this.ready = false;    // WebGL 불가/로드 실패 → 조용히 폴백
-    }
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const { id } = await res.json();
+      done();
+      await initCharacters(id);
+      setStatus("✅ 캐릭터가 추가됐어요. 문장을 입력해보세요!");
+    } catch (err) { setStatus(err.message, true); }
   },
-  setCharacter() {
-    if (!this.ready || !parts.base) return;
-    const T = this.T;
-    if (this.texture) this.texture.dispose();
-    this.texture = new T.Texture(parts.base);
-    this.texture.colorSpace = T.NoColorSpace;   // sRGB 바이트 그대로 업로드 (GPU 선형화 안 함)
-    this.texture.premultiplyAlpha = false;
-    this.texture.minFilter = T.LinearFilter;
-    this.texture.magFilter = T.LinearFilter;
-    this.texture.generateMipmaps = false;
-    this.texture.needsUpdate = true;
-    this.material.uniforms.uTex.value = this.texture;
-    const mc = manifest.mouthCenter || [256, 340];
-    const mw = (manifest.mouthStyle && manifest.mouthStyle.width) || 30;
-    this.material.uniforms.uJawC.value.set(mc[0], mc[1] + 38);
-    this.material.uniforms.uCornerL.value.set(mc[0] - mw * 1.2, mc[1]);
-    this.material.uniforms.uCornerR.value.set(mc[0] + mw * 1.2, mc[1]);
-  },
-  render() {
-    if (!this.ready || !this.texture) return;
-    const u = this.material.uniforms;
-    u.uJaw.value = W("jawopen");
-    u.uSmileL.value = W("mouthsmileleft");
-    u.uSmileR.value = W("mouthsmileright");
-    u.uRound.value = Math.max(W("mouthpucker"), W("mouthfunnel"));
-    u.uFrownL.value = W("mouthfrownleft");
-    u.uFrownR.value = W("mouthfrownright");
-    this.renderer.render(this.scene, this.camera);
-  },
-};
+});
+
+// 드래그앤드랍·파일 입력 (어노테이터로 위임)
+stage.addEventListener("dragover", e => e.preventDefault());
+stage.addEventListener("drop", e => { e.preventDefault(); annotator.acceptFile(e.dataTransfer.files[0]); });
+$("addChar").onclick = () => $("charFile").click();
+$("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.target.value = ""; };
+
+// 깜빡임 UI 배선
+$("blinkBtn").onclick = () => blinker.trigger();
+$("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
 
 // ---------- 렌더 루프 ----------
 function render(now) {
   requestAnimationFrame(render);
-  if (annot) {
+  if (annotator.active()) {
     shakeEl.style.transform = "none";       // 어노테이션 중엔 흔들림 없음 (getBoundingClientRect 정합 유지)
     glCanvas.style.visibility = "hidden";   // 워프 캔버스 숨김
-    drawAnnot();
+    annotator.draw();
     return;
   }
   if (!parts.base) return;
 
   // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
-  const target = currentWeights();
-  for (const k in target) if (!(k in smooth)) smooth[k] = 0;
-  for (const k in smooth) smooth[k] = 0.42 * smooth[k] + 0.58 * (target[k] || 0);
+  AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
   const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };
   const smileOv = +$("ovSmile").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k in ov) smooth[k] = Math.max(smooth[k] || 0, ov[k]);
+  const emotion = emo.current();
   for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]);
-  const blink = Math.max(blinkValue(now), +$("ovBlink").value,
+  const blink = Math.max(blinker.value(now), +$("ovBlink").value,
                          Math.max(W("eyeblinkleft"), W("eyeblinkright")));
 
   // 머리 움직임: 발화 에너지(끄덕임) + 느린 표류 + 잔잔한 사인
-  const t = now / 1000;
-  nod = 0.85 * nod + 0.15 * W("jawopen");
-  if (now > wanderNext) {
-    wanderNext = now + 2200 + Math.random() * 2500;
-    wanderGoalR = (Math.random() - 0.5) * 0.03;
-    wanderGoalY = (Math.random() - 0.5) * 5;
-  }
-  wanderR += (wanderGoalR - wanderR) * 0.02;
-  wanderY += (wanderGoalY - wanderY) * 0.02;
   const sway = anim && !audio.paused ? 1 : 0.5;
-  const rot = Math.sin(t * 0.9) * 0.008 * sway + wanderR + nod * 0.015;
-  const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3;
-
-  // 머리 흔들림은 두 캔버스(WebGL base + 2D 오버레이)를 함께 감싼 래퍼에 CSS 변환으로 적용.
-  // transform-origin=center + translateY(% of height) 조합이 기존 ctx translate/rotate와 수학적으로 동일.
-  shakeEl.style.transform = `rotate(${rot.toFixed(5)}rad) translateY(${(dy / 512 * 100).toFixed(4)}%)`;
+  headWander(shakeEl, now, W("jawopen"), sway);
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }
@@ -554,8 +256,8 @@ function render(now) {
     const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
     const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
     const sl = +$("ovGaze").value;
-    gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursorGX * 0.9)) - gazeSX) * 0.15;
-    gazeSY += ((chY || cursorGY * 0.6) - gazeSY) * 0.15;
+    gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursor.gx * 0.9)) - gazeSX) * 0.15;
+    gazeSY += ((chY || cursor.gy * 0.6) - gazeSY) * 0.15;
     draw("pupil_L", gazeSX * manifest.pupilRange, gazeSY * manifest.pupilRange);
     draw("pupil_R", gazeSX * manifest.pupilRange, gazeSY * manifest.pupilRange);
   }
@@ -563,14 +265,14 @@ function render(now) {
   // base 워프와 정확히 함께 움직이게 함(이중 이동 방지). OFF면 기존 jawDrop 사용.
   const jawDy = warpOn ? 14 * W("jawopen") * WARP_JAW_G : W("jawopen") * (manifest.jawDrop || 8);
   if (manifest.proceduralMouth) {
-    drawVectorMouth(jawDy);  // 근육 채널 직접 구동 (기본)
+    AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);  // 근육 채널 직접 구동 (기본)
   } else {
     // 스프라이트 캐릭터용: 전환 시 크로스페이드로 부드럽게 (스케일 없음, jaw 오프셋만)
-    const m = pickMouth(now);
+    const m = mouthPicker.pick(now, W);
     const dyM = jawDy;
-    const f = Math.min(1, (now - switchAt) / FADE_MS);
-    if (f < 1 && prevMouth && parts["mouth_" + prevMouth]) {
-      ctx.globalAlpha = 1 - f; draw("mouth_" + prevMouth, 0, dyM);
+    const f = Math.min(1, (now - mouthPicker.switchAt) / mouthPicker.FADE_MS);
+    if (f < 1 && mouthPicker.prevMouth && parts["mouth_" + mouthPicker.prevMouth]) {
+      ctx.globalAlpha = 1 - f; draw("mouth_" + mouthPicker.prevMouth, 0, dyM);
       ctx.globalAlpha = f; draw("mouth_" + m, 0, dyM);
       ctx.globalAlpha = 1;
     } else {
@@ -586,28 +288,15 @@ $("form").onsubmit = async e => {
   const text = $("text").value.trim();
   if (!text) return;
   if ($("autoEmo").checked) {
-    const emo = inferEmotion(text);
-    if (emo) setEmotion(emo);
+    const emoName = AvatarCore.inferEmotion(text);
+    if (emoName) emo.setEmotion(emoName);
   }
   $("send").disabled = true;
   setStatus("생성 중…");
   try {
-    const res = await fetch("/api/speak_rt", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice: $("voice").value, engine: $("engine").value }),
-    });
-    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-    const { job_id } = await res.json();
-    let job;
-    while (true) {
-      job = await fetch(`/api/jobs/${job_id}`).then(r => r.json());
-      if (job.status === "done" || job.status === "error") break;
-      await new Promise(r => setTimeout(r, 400));
-    }
-    if (job.status === "error") throw new Error(job.error);
-    const { audio_url, fps, names, frames } = job.result;
-    anim = { fps, frames, index: names.map((n, i) => [norm(n), i]) };
-    audio.src = audio_url;
+    const r = await AvatarCore.speakRT({ text, voice: $("voice").value, engine: $("engine").value, pollMs: 400 });
+    anim = { fps: r.fps, frames: r.frames, index: r.names.map((n, i) => [AvatarCore.norm(n), i]) };
+    audio.src = r.audio_url;
     await audio.play();
     setStatus("");
   } catch (err) {

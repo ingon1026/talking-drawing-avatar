@@ -79,6 +79,7 @@
   <audio id="audio"></audio>
 </main>
 
+<script src="/static/avatar_core.js"></script>
 <script type="module">
 let THREE, GLTFLoader;
 try {
@@ -91,7 +92,6 @@ try {
 
 const $ = id => document.getElementById(id);
 const audio = $("audio");
-const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
 
 // ---------- Three.js 씬 ----------
 const canvas = $("cv");
@@ -125,7 +125,7 @@ function makeEye(cx) {
 new GLTFLoader().load("/static/assets3d/mark.glb", g => {
   g.scene.traverse(o => { if (o.isMesh) mesh = o; });
   dict = mesh.morphTargetDictionary || {};
-  morphMap = Object.entries(dict).map(([name, idx]) => [norm(name), idx]);  // 매 프레임 regex 방지
+  morphMap = Object.entries(dict).map(([name, idx]) => [AvatarCore.norm(name), idx]);  // 매 프레임 regex 방지
   group.add(g.scene);
   const box = new THREE.Box3().setFromObject(g.scene);
   const c = box.getCenter(new THREE.Vector3());
@@ -154,77 +154,33 @@ addEventListener("pointermove", e => {
   px = e.clientX; py = e.clientY;
 });
 
-// ---------- 상태 (퍼펫과 동일 구조) ----------
+// ---------- 상태 (퍼펫과 동일 구조 — 공유 코어 소비) ----------
 let anim = null, smooth = {};
 const W = k => smooth[k] || 0;
 let nod = 0;
-let cursorGX = 0, cursorGY = 0, gazeSX = 0, gazeSY = 0;  // 커서 시선(목표/평활)
-canvas.addEventListener("pointermove", e => {
-  const r = canvas.getBoundingClientRect();
-  cursorGX = ((e.clientX - r.left) / r.width - 0.5) * 2;
-  cursorGY = ((e.clientY - r.top) / r.height - 0.5) * 2;
+let gazeSX = 0, gazeSY = 0;  // 커서 시선(평활)
+
+const cursor = AvatarCore.makeCursorTracker(canvas);
+const blinker = AvatarCore.makeBlink({
+  autoBlink: () => $("autoBlink").checked,
+  intervalMs: () => 3500, duration: 150, jitter: 0.8,
 });
-canvas.addEventListener("pointerleave", () => { cursorGX = 0; cursorGY = 0; });
-let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
-$("blinkBtn").onclick = () => blinkUntil = performance.now() + 150;
-function blinkValue(now) {
-  if ($("autoBlink").checked && now > nextAutoBlink) {
-    blinkUntil = now + 150;
-    nextAutoBlink = now + 3500 * (0.7 + Math.random() * 0.8);
-  }
-  return now < blinkUntil ? 1 : 0;
-}
-
-const EMOTIONS = {
-  neutral: {},
-  joy: { mouthsmileleft: 0.55, mouthsmileright: 0.55, cheeksquintleft: 0.45, cheeksquintright: 0.45, eyesquintleft: 0.25, eyesquintright: 0.25 },
-  sad: { mouthfrownleft: 0.5, mouthfrownright: 0.5, browinnerup: 0.7, mouthshrugupper: 0.2 },
-  angry: { browdownleft: 0.85, browdownright: 0.85, nosesneerleft: 0.4, nosesneerright: 0.4, mouthpressleft: 0.4, mouthpressright: 0.4, jawforward: 0.25 },
-  surprise: { browinnerup: 0.6, browouterupleft: 0.75, browouterupright: 0.75, eyewideleft: 0.8, eyewideright: 0.8, jawopen: 0.3 },
-};
-let emotion = EMOTIONS.neutral;
-function setEmotion(key) {
-  emotion = EMOTIONS[key] || EMOTIONS.neutral;
-  document.querySelectorAll("#emotions button").forEach(x =>
-    x.style.background = x.dataset.emo === key ? "#76b900" : "#2a2a35");
-}
-document.querySelectorAll("#emotions button").forEach(b => {
-  b.onclick = () => setEmotion(b.dataset.emo);
-});
-
-// 텍스트 감정 추론 (발화 시 자동 프리셋 — puppet/docs/studio3d 동일 규칙 유지할 것)
-function inferEmotion(text) {
-  if (/ㅋㅋ|ㅎㅎ|하하|호호|웃겨|웃음/.test(text)) return "joy";  // 웃음이 최우선 신호
-  if (/[ㅠㅜ]{2,}|슬프|슬퍼|우울|눈물|아파|힘들|속상|외로/.test(text)) return "sad";
-  if (/화나|화가|짜증|열받|분노|싫어|그만해/.test(text)) return "angry";
-  if (/헉|깜짝|놀라|대박|세상에|믿을 수|[?!]{2,}/.test(text)) return "surprise";
-  if (/ㅋㅋ|ㅎㅎ|하하|호호|신나|행복|좋아|좋다|최고|사랑|기뻐|반가|!/.test(text)) return "joy";
-  return null;
-}
-
-function currentWeights() {
-  const w = {};
-  if (anim && !audio.paused && !audio.ended) {
-    const f = anim.frames[Math.min(Math.floor(audio.currentTime * anim.fps), anim.frames.length - 1)];
-    for (const [k, col] of anim.index) w[k] = f[col];
-  }
-  return w;
-}
+const emo = AvatarCore.makeEmotion("#76b900");
+$("blinkBtn").onclick = () => blinker.trigger();
 
 // ---------- 렌더 루프 ----------
 function render(now) {
   requestAnimationFrame(render);
   if (!mesh) return;
 
-  const target = currentWeights();
-  for (const k in target) if (!(k in smooth)) smooth[k] = 0;
-  for (const k in smooth) smooth[k] = 0.42 * smooth[k] + 0.58 * (target[k] || 0);
+  AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k of ["browinnerup", "browouterupleft", "browouterupright"]) smooth[k] = Math.max(smooth[k] || 0, browOv);
+  const emotion = emo.current();
   for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]);
-  const blink = Math.max(blinkValue(now), +$("ovBlink").value, W("eyeblinkleft"), W("eyeblinkright"));
+  const blink = Math.max(blinker.value(now), +$("ovBlink").value, W("eyeblinkleft"), W("eyeblinkright"));
 
   // 모프 적용 (실제 3D 근육)
   const inf = mesh.morphTargetInfluences;
@@ -236,8 +192,8 @@ function render(now) {
   const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
   const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
   const sl = +$("ovGaze").value;
-  gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursorGX * 0.8)) - gazeSX) * 0.15;
-  gazeSY += ((chY || cursorGY * 0.5) - gazeSY) * 0.15;
+  gazeSX += ((Math.abs(sl) > 0.01 ? sl : (chX || cursor.gx * 0.8)) - gazeSX) * 0.15;
+  gazeSY += ((chY || cursor.gy * 0.5) - gazeSY) * 0.15;
   for (const e of eyes) e.rotation.set(gazeSY * 0.3, gazeSX * 0.4, 0);
 
   // 머리: 사용자 드래그 + 발화 중 미세 끄덕임 + 엔진 head pose(있을 때만 — 현 체크포인트는 미출력)
@@ -259,28 +215,15 @@ $("form").onsubmit = async e => {
   const text = $("text").value.trim();
   if (!text) return;
   if ($("autoEmo").checked) {
-    const emo = inferEmotion(text);
-    if (emo) setEmotion(emo);
+    const emoName = AvatarCore.inferEmotion(text);
+    if (emoName) emo.setEmotion(emoName);
   }
   $("send").disabled = true;
   setStatus("생성 중…");
   try {
-    const res = await fetch("/api/speak_rt", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice: $("voice").value, engine: $("engine").value }),
-    });
-    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-    const { job_id } = await res.json();
-    let job;
-    while (true) {
-      job = await fetch(`/api/jobs/${job_id}`).then(r => r.json());
-      if (job.status === "done" || job.status === "error") break;
-      await new Promise(r => setTimeout(r, 300));
-    }
-    if (job.status === "error") throw new Error(job.error);
-    const { audio_url, fps, names, frames, head } = job.result;
-    anim = { fps, frames, head, index: names.map((n, i) => [norm(n), i]) };
-    audio.src = audio_url;
+    const r = await AvatarCore.speakRT({ text, voice: $("voice").value, engine: $("engine").value, pollMs: 300 });
+    anim = { fps: r.fps, frames: r.frames, head: r.head, index: r.names.map((n, i) => [AvatarCore.norm(n), i]) };
+    audio.src = r.audio_url;
     await audio.play();
     setStatus("");
   } catch (err) {
