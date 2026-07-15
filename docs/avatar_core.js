@@ -104,10 +104,11 @@ window.AvatarCore = (() => {
   function makeEmotion(buttons, activeColor) {
     let emotion = EMOTIONS.neutral;
     // intensity: 자동 추론 시 감정 세기(0~1)로 프리셋 값을 스케일. 버튼 클릭은 항상 1.
+    // 항상 새 객체로 스케일 — 공유 EMOTIONS 프리셋 앨리어싱 회피(v*1===v 라 무손실).
     function setEmotion(key, intensity = 1) {
       const base = EMOTIONS[key] || EMOTIONS.neutral;
-      emotion = intensity >= 0.999 ? base
-        : Object.fromEntries(Object.entries(base).map(([k, v]) => [k, v * intensity]));
+      emotion = {};
+      for (const k in base) emotion[k] = base[k] * intensity;
       buttons.forEach(x => x.style.background = x.dataset.emo === key ? activeColor : "#2a2a35");
     }
     buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });
@@ -424,6 +425,19 @@ window.AvatarCore = (() => {
     return anim;
   }
 
+  // ---------- 감정 결정 + 발화 (puppet·studio3d 공용) ----------
+  // emotion 지정(LLM 판단) 있으면 그대로, 없으면 텍스트에서 추론. autoEmo(호출 시점 boolean) 켜져 있으면
+  // emo(makeEmotion 인스턴스) 프리셋 + 목소리 톤 적용 후 speakFlow. voice/engine 은 호출 시점 값.
+  async function speakWithEmotion({ text, emotion, autoEmo, emo, voice, engine, audioEl, onAnim }) {
+    const r = emotion ? { emo: emotion, intensity: 0.9 } : inferEmotion(text);
+    let prosody = null;
+    if (r && autoEmo) {
+      emo.setEmotion(r.emo, r.intensity);
+      prosody = voiceProsody(r.emo, r.intensity);
+    }
+    return speakFlow({ text, voice, engine, audioEl, onAnim, prosody });
+  }
+
   // ---------- 상태줄 setter ----------
   function bindStatus(el) {
     return (msg, isError) => { el.textContent = msg; el.className = isError ? "error" : ""; };
@@ -453,9 +467,7 @@ window.AvatarCore = (() => {
       else if (interim) onText(interim, false);
     };
     return {
-      listening: () => listening,
       toggle() { if (listening) rec.stop(); else { try { rec.start(); } catch (_) {} } },
-      stop() { if (listening) rec.stop(); },
     };
   }
 
@@ -468,6 +480,59 @@ window.AvatarCore = (() => {
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     return res.json();
+  }
+
+  // ---------- 대화 모드 글루 (마이크/입력 → LLM → 아바타 응답; puppet·studio3d 공용) ----------
+  // history 상태 + 채팅로그(addTurn) + runChat + 모드 토글 + 지우기 + 마이크 배선을 소유.
+  // 페이지 주입: speak(text,emotion) 발화 함수, botName(봇 턴 화자명), placeholderOn(대화 모드 안내문),
+  //   logEl/chatModeEl/clearBtnEl/textEl/sendEl/micBtnEl/formEl 엘리먼트, statusSet(bindStatus 결과).
+  // placeholderOff 는 입력창 초기 placeholder 를 그대로 재사용. 반환 { runChat } — onsubmit 의
+  // chat|say 분기는 페이지가 얇게 소유(runChat 알맹이만 코어).
+  function makeChat({ speak, logEl, botName, placeholderOn, chatModeEl, clearBtnEl, textEl, sendEl, micBtnEl, formEl, statusSet }) {
+    const history = [];   // [{role, content}] 최근 턴만 유지
+    const placeholderOff = textEl.placeholder;
+    function addTurn(who, text, cls) {
+      const div = document.createElement("div");
+      div.className = "turn";
+      div.innerHTML = `<span class="who">${who}</span><span class="${cls}"></span>`;
+      div.lastChild.textContent = text;   // 사용자 입력이므로 textContent로 안전하게
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    chatModeEl.onchange = () => {
+      const on = chatModeEl.checked;
+      logEl.style.display = on ? "grid" : "none";
+      clearBtnEl.style.display = on ? "" : "none";
+      sendEl.textContent = on ? "말 걸기" : "말하기";
+      textEl.placeholder = on ? placeholderOn : placeholderOff;
+    };
+    clearBtnEl.onclick = () => { history.length = 0; logEl.innerHTML = ""; statusSet(""); };
+    async function runChat(text) {
+      addTurn("나", text, "me");
+      statusSet("생각 중…");
+      const { reply, emotion } = await chat(text, history.slice(-6));   // 최근 3턴만 전달
+      history.push({ role: "user", content: text }, { role: "assistant", content: reply });
+      addTurn(botName, reply, "bot");
+      statusSet("말하는 중…");
+      await speak(reply, emotion);
+    }
+    // 마이크 (브라우저 음성인식 — 미지원 브라우저면 makeMic null → 버튼 숨김 유지)
+    const mic = makeMic({
+      onText: (t, isFinal) => {
+        textEl.value = t;
+        if (isFinal) formEl.requestSubmit();   // 말이 끝나면 자동 전송
+      },
+      onState: (st, err) => {
+        micBtnEl.classList.toggle("on", st === "listening");
+        if (st === "listening") statusSet("듣고 있어요… 말씀하세요");
+        else if (st === "error") statusSet(err === "not-allowed" ? "마이크 권한이 필요합니다." : `음성 인식 오류: ${err}`, true);
+      },
+    });
+    if (mic) {
+      micBtnEl.style.display = "";
+      micBtnEl.onclick = () => { if (!chatModeEl.checked) chatModeEl.click(); mic.toggle(); };
+    }
+    return { runChat };
   }
 
   // ---------- 드래그앤드랍 캐릭터 생성: 어노테이션 캡처 UI (4클릭 상태머신) ----------
@@ -553,7 +618,7 @@ window.AvatarCore = (() => {
   return {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
-    makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, bindStatus, makeAnnotator,
-    makeMic, chat,
+    makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
+    bindStatus, makeAnnotator, makeMic, chat, makeChat,
   };
 })();

@@ -169,11 +169,16 @@ def chat(req: ChatReq):
         raise HTTPException(400, "빈 입력입니다.")
     try:
         import llm_source  # lazy: 모듈·모델은 첫 대화 때 로드
+    except ModuleNotFoundError as e:
+        if e.name == "llm_source":
+            raise HTTPException(503, "대화 기능이 아직 설치되지 않았습니다 (llm_source.py 없음).")
+        raise HTTPException(503, f"대화 모듈 의존성 누락: {e}")   # requests 등
+    # llm_source.chat 은 사용자용 한국어 메시지를 담아 RuntimeError 로 던진다 → 그대로 503 전달.
+    # 그 외 예외(진짜 버그)는 삼키지 않고 500 으로 propagate.
+    try:
         return llm_source.chat(req.text, req.history)
-    except ModuleNotFoundError:
-        raise HTTPException(503, "대화 기능이 아직 설치되지 않았습니다 (llm_source.py 없음).")
-    except Exception as e:
-        raise HTTPException(503, f"대화 모델을 쓸 수 없습니다: {e}")
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
 
 
 class CharacterCreateReq(BaseModel):

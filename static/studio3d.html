@@ -220,45 +220,18 @@ function render(now) {
 requestAnimationFrame(render);
 
 // ---------- 발화 (퍼펫과 동일 API) ----------
-async function say(text, emotion) {
-  const r = emotion ? { emo: emotion, intensity: 0.9 } : AvatarCore.inferEmotion(text);
-  let prosody = null;
-  if (r && $("autoEmo").checked) {
-    emo.setEmotion(r.emo, r.intensity);
-    prosody = AvatarCore.voiceProsody(r.emo, r.intensity);
-  }
-  await AvatarCore.speakFlow({ text, voice: $("voice").value, engine: $("engine").value,
-                              audioEl: audio, onAnim: a => { anim = a; }, prosody });
-}
+const speak = (text, emotion) => AvatarCore.speakWithEmotion({
+  text, emotion, autoEmo: $("autoEmo").checked, emo,
+  voice: $("voice").value, engine: $("engine").value,
+  audioEl: audio, onAnim: a => { anim = a; },
+});
 
-// ---------- 대화 모드 (퍼펫과 동일 흐름) ----------
-let history = [];
-function addTurn(who, text, cls) {
-  const div = document.createElement("div");
-  div.className = "turn";
-  div.innerHTML = `<span class="who">${who}</span><span class="${cls}"></span>`;
-  div.lastChild.textContent = text;
-  $("chatlog").appendChild(div);
-  $("chatlog").scrollTop = $("chatlog").scrollHeight;
-}
-$("chatMode").onchange = () => {
-  const on = $("chatMode").checked;
-  $("chatlog").style.display = on ? "grid" : "none";
-  $("clearChat").style.display = on ? "" : "none";
-  $("send").textContent = on ? "말 걸기" : "말하기";
-  $("text").placeholder = on ? "mark에게 말을 걸어보세요…" : "mark가 말할 문장을 입력하세요…";
-};
-$("clearChat").onclick = () => { history = []; $("chatlog").innerHTML = ""; setStatus(""); };
-
-async function runChat(text) {
-  addTurn("나", text, "me");
-  setStatus("생각 중…");
-  const { reply, emotion } = await AvatarCore.chat(text, history.slice(-6));
-  history.push({ role: "user", content: text }, { role: "assistant", content: reply });
-  addTurn("mark", reply, "bot");
-  setStatus("말하는 중…");
-  await say(reply, emotion);
-}
+// ---------- 대화 모드 (퍼펫과 동일 흐름; 코어가 소유) ----------
+const chatCtl = AvatarCore.makeChat({
+  speak, logEl: $("chatlog"), botName: "mark", placeholderOn: "mark에게 말을 걸어보세요…",
+  chatModeEl: $("chatMode"), clearBtnEl: $("clearChat"), textEl: $("text"),
+  sendEl: $("send"), micBtnEl: $("micBtn"), formEl: $("form"), statusSet: setStatus,
+});
 
 $("form").onsubmit = async e => {
   e.preventDefault();
@@ -268,8 +241,8 @@ $("form").onsubmit = async e => {
   $("text").value = "";
   setStatus("생성 중…");
   try {
-    if ($("chatMode").checked) await runChat(text);
-    else await say(text);
+    if ($("chatMode").checked) await chatCtl.runChat(text);
+    else await speak(text);
     setStatus("");
   } catch (err) {
     setStatus(err.message, true);
@@ -277,23 +250,6 @@ $("form").onsubmit = async e => {
     $("send").disabled = false;
   }
 };
-
-// ---------- 마이크 ----------
-const mic = AvatarCore.makeMic({
-  onText: (t, isFinal) => {
-    $("text").value = t;
-    if (isFinal) $("form").requestSubmit();
-  },
-  onState: (st, err) => {
-    $("micBtn").classList.toggle("on", st === "listening");
-    if (st === "listening") setStatus("듣고 있어요… 말씀하세요");
-    else if (st === "error") setStatus(err === "not-allowed" ? "마이크 권한이 필요합니다." : `음성 인식 오류: ${err}`, true);
-  },
-});
-if (mic) {
-  $("micBtn").style.display = "";
-  $("micBtn").onclick = () => { if (!$("chatMode").checked) $("chatMode").click(); mic.toggle(); };
-}
 
 fetch("/api/health").then(r => r.json()).then(h => {
   if (!h.chat) { $("chatRow").style.display = "none"; $("micBtn").style.display = "none"; }
