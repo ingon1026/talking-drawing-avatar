@@ -33,6 +33,7 @@ IRIS = "#6b4a33"
 
 MANIFEST = {
     "name": "기본 캐릭터",
+    "persona": "너는 사용자가 그린 그림에서 태어난 밝고 다정한 아바타야. 호기심 많고 친구처럼 편하게 대화한다.",
     "pupilRange": 8,   # 시선에 따른 눈동자 이동 px
     "browRange": 12,   # 눈썹 올림 최대 px
     "jawDrop": 9,      # JawOpen에 따른 입 전체 하강 px

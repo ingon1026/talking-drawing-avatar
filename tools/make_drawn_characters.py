@@ -12,6 +12,8 @@ from character_builder import build_character
 CHARS = {
     "pig": dict(
         src=ROOT / "test_1.png", name="돼지",
+        persona="너는 화이트보드에 그려진 통통하고 귀여운 돼지야. 느긋하고 먹는 이야기를 좋아하며, "
+                "가끔 말끝에 '꿀꿀'을 붙이고 매사에 여유롭다.",
         eyes={"L": (161, 78, 12), "R": (209, 73, 12)},
         mouth_box=(162, 126, 222, 153),
         mouth_center=(191, 138),
@@ -21,6 +23,8 @@ CHARS = {
     ),
     "stick": dict(
         src=ROOT / "test_2.png", name="졸라맨",
+        persona="너는 펜으로 슥슥 그린 졸라맨이야. 단순하고 씩씩하며 매사에 긍정적이고, "
+                "짧고 활기차게 말한다.",
         eyes={"L": (117, 27, 8), "R": (156, 26, 8)},
         mouth_box=(116, 33, 172, 62),  # 머리 윤곽선(x≈177) 침범 금지
         mouth_center=(145, 48),

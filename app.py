@@ -160,6 +160,7 @@ def speak_rt(req: SpeakRtReq):
 class ChatReq(BaseModel):
     text: str
     history: list[dict] = []   # [{"role": "user"|"assistant", "content": str}, ...] 최근 턴
+    persona: str | None = None  # 선택된 캐릭터 성격(manifest.persona), 없으면 기본 정체성
 
 
 @app.post("/api/chat")
@@ -176,7 +177,7 @@ def chat(req: ChatReq):
     # llm_source.chat 은 사용자용 한국어 메시지를 담아 RuntimeError 로 던진다 → 그대로 503 전달.
     # 그 외 예외(진짜 버그)는 삼키지 않고 500 으로 propagate.
     try:
-        return llm_source.chat(req.text, req.history)
+        return llm_source.chat(req.text, req.history, req.persona)
     except RuntimeError as e:
         raise HTTPException(503, str(e))
 

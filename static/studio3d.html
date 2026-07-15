@@ -231,6 +231,8 @@ const chatCtl = AvatarCore.makeChat({
   speak, logEl: $("chatlog"), botName: "mark", placeholderOn: "mark에게 말을 걸어보세요…",
   chatModeEl: $("chatMode"), clearBtnEl: $("clearChat"), textEl: $("text"),
   sendEl: $("send"), micBtnEl: $("micBtn"), formEl: $("form"), statusSet: setStatus,
+  // mark 3D 헤드는 캐릭터 전환이 없어 고정 성격
+  getPersona: () => "너는 3D로 정교하게 빚어진 차분하고 지적인 아바타 mark 야. 또렷하고 침착하게 말한다.",
 });
 
 $("form").onsubmit = async e => {

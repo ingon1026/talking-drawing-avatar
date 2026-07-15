@@ -473,10 +473,10 @@ window.AvatarCore = (() => {
 
   // ---------- 대화 (LLM 응답 — 로컬 서버 전용) ----------
   // 반환: {reply, emotion}. emotion 은 EMOTIONS 키 중 하나(LLM 판단). 실패 시 throw.
-  async function chat(text, history) {
+  async function chat(text, history, persona) {
     const res = await fetch("/api/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, history: history || [] }),
+      body: JSON.stringify({ text, history: history || [], persona: persona || null }),
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     return res.json();
@@ -485,10 +485,10 @@ window.AvatarCore = (() => {
   // ---------- 대화 모드 글루 (마이크/입력 → LLM → 아바타 응답; puppet·studio3d 공용) ----------
   // history 상태 + 채팅로그(addTurn) + runChat + 모드 토글 + 지우기 + 마이크 배선을 소유.
   // 페이지 주입: speak(text,emotion) 발화 함수, botName(봇 턴 화자명), placeholderOn(대화 모드 안내문),
-  //   logEl/chatModeEl/clearBtnEl/textEl/sendEl/micBtnEl/formEl 엘리먼트, statusSet(bindStatus 결과).
-  // placeholderOff 는 입력창 초기 placeholder 를 그대로 재사용. 반환 { runChat } — onsubmit 의
-  // chat|say 분기는 페이지가 얇게 소유(runChat 알맹이만 코어).
-  function makeChat({ speak, logEl, botName, placeholderOn, chatModeEl, clearBtnEl, textEl, sendEl, micBtnEl, formEl, statusSet }) {
+  //   logEl/chatModeEl/clearBtnEl/textEl/sendEl/micBtnEl/formEl 엘리먼트, statusSet(bindStatus 결과),
+  //   getPersona()(선택 — 현재 캐릭터 성격; 없으면 기본 정체성). placeholderOff 는 입력창 초기 placeholder 재사용.
+  // 반환 { runChat } — onsubmit 의 chat|say 분기는 페이지가 얇게 소유(runChat 알맹이만 코어).
+  function makeChat({ speak, logEl, botName, placeholderOn, chatModeEl, clearBtnEl, textEl, sendEl, micBtnEl, formEl, statusSet, getPersona }) {
     const history = [];   // [{role, content}] 최근 턴만 유지
     const placeholderOff = textEl.placeholder;
     function addTurn(who, text, cls) {
@@ -510,7 +510,7 @@ window.AvatarCore = (() => {
     async function runChat(text) {
       addTurn("나", text, "me");
       statusSet("생각 중…");
-      const { reply, emotion } = await chat(text, history.slice(-6));   // 최근 3턴만 전달
+      const { reply, emotion } = await chat(text, history.slice(-6), getPersona && getPersona());   // 최근 3턴 + 캐릭터 성격
       history.push({ role: "user", content: text }, { role: "assistant", content: reply });
       addTurn(botName, reply, "bot");
       statusSet("말하는 중…");

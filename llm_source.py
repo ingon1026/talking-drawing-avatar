@@ -38,9 +38,13 @@ SCHEMA = {
     "required": ["reply", "emotion"],
 }
 
-SYSTEM = (
-    "너는 사용자가 그린 그림에서 태어난 친근한 아바타야. 사용자와 음성으로 대화한다.\n"
-    "규칙:\n"
+# 캐릭터별 정체성(persona)은 manifest 에서 오고, 없으면 기본 정체성을 쓴다.
+IDENTITY_DEFAULT = "너는 사용자가 그린 그림에서 태어난 친근한 아바타야. 사용자와 음성으로 대화한다."
+
+# 정체성 뒤에 붙는 공통 규칙 — 캐릭터가 바뀌어도 말투 규칙·출력 형식은 고정.
+RULES = (
+    "\n규칙:\n"
+    "- 위 성격을 대화 내내 일관되게 연기한다. 하지만 아래 규칙은 성격보다 우선한다.\n"
     "- 반드시 한국어 존댓말('~요', '~예요')로 답한다. 반말('~야', '~어')은 절대 쓰지 않는다.\n"
     "  (사용자가 반말로 물어도 아바타는 존댓말로 답한다.)\n"
     "- 답변은 1~2문장, 60자 이내로 매우 짧게 한다. 길게 설명하지 않는다.\n"
@@ -49,6 +53,10 @@ SYSTEM = (
     "  감정이 뚜렷하지 않으면 neutral 을 쓴다.\n"
     'JSON 한 개만 출력한다: {"reply": "<응답>", "emotion": "<감정>"}'
 )
+
+
+def _system(persona: str | None) -> str:
+    return (persona.strip() if persona else IDENTITY_DEFAULT) + RULES
 
 # TTS 가 읽을 수 없는 것들: 이모지/픽토그램(비BMP 대부분), 마크다운 기호.
 _DROP = re.compile(r"[\U00010000-\U0010ffff☀-➿*_`#>\[\]]")
@@ -59,9 +67,12 @@ def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", _DROP.sub("", str(s))).strip()
 
 
-def chat(text: str, history: list[dict] | None = None) -> dict:
-    """사용자 발화 → {"reply": 한국어 응답, "emotion": EMOTIONS 중 하나}."""
-    msgs = [{"role": "system", "content": SYSTEM}]
+def chat(text: str, history: list[dict] | None = None, persona: str | None = None) -> dict:
+    """사용자 발화 → {"reply": 한국어 응답, "emotion": EMOTIONS 중 하나}.
+
+    persona: 선택된 캐릭터의 성격 한 줄(manifest.persona). 없으면 기본 정체성.
+    """
+    msgs = [{"role": "system", "content": _system(persona)}]
     for m in (history or [])[-HISTORY_TURNS:]:
         if m.get("role") in ("user", "assistant") and m.get("content"):
             msgs.append({"role": m["role"], "content": str(m["content"])})
@@ -108,7 +119,8 @@ def chat(text: str, history: list[dict] | None = None) -> dict:
 
 if __name__ == "__main__":
     q = sys.argv[1] if len(sys.argv) > 1 else "안녕?"
+    persona = sys.argv[2] if len(sys.argv) > 2 else None   # python llm_source.py "질문" "성격"
     t0 = time.perf_counter()
-    out = chat(q)
+    out = chat(q, persona=persona)
     print(f"Q: {q}\nA: {out['reply']}\n   emotion={out['emotion']}  "
           f"{len(out['reply'])}자  {time.perf_counter() - t0:.2f}s")

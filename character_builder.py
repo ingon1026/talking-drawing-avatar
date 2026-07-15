@@ -31,7 +31,7 @@ def _border_median(img, box, ring=4):
 
 def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                     mouth_style=None, jaw_drop=6, closed_eye=("#1a1a1a", 4),
-                    deletable=False):
+                    deletable=False, persona=None):
     """eyes: {"L": (cx, cy, 반박스), "R": ...} / mouth_box: (x0,y0,x1,y1) / 좌표는 원본 픽셀."""
     src = Image.open(src_path).convert("RGB")
     s = min(CANVAS / src.width, CANVAS / src.height)
@@ -82,6 +82,8 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},
         "deletable": deletable,
     }
+    if persona:
+        manifest["persona"] = persona
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
 
     for pv, state in (("preview.png", "open"), ("preview_blink.png", "closed")):

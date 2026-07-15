@@ -290,6 +290,7 @@ const chatCtl = AvatarCore.makeChat({
   speak, logEl: $("chatlog"), botName: "아바타", placeholderOn: "아바타에게 말을 걸어보세요…",
   chatModeEl: $("chatMode"), clearBtnEl: $("clearChat"), textEl: $("text"),
   sendEl: $("send"), micBtnEl: $("micBtn"), formEl: $("form"), statusSet: setStatus,
+  getPersona: () => manifest.persona,   // 선택된 캐릭터 성격을 대화에 반영
 });
 
 $("form").onsubmit = async e => {
