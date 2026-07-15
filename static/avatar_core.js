@@ -103,19 +103,26 @@ window.AvatarCore = (() => {
   // 감정 상태 + 버튼 배선. buttons/activeColor 는 페이지가 주입(2D #5b8cff / 3D #76b900).
   function makeEmotion(buttons, activeColor) {
     let emotion = EMOTIONS.neutral;
+    let sticky = true;   // 수동 버튼=유지, 자동(발화 감정)=발화 끝나면 중립 복귀
+    let hold = 1;        // 감정 세기 게이트(0~1). 자동 감정은 유휴 중 감쇠.
     // intensity: 자동 추론 시 감정 세기(0~1)로 프리셋 값을 스케일. 버튼 클릭은 항상 1.
     // 항상 새 객체로 스케일 — 공유 EMOTIONS 프리셋 앨리어싱 회피(v*1===v 라 무손실).
-    function setEmotion(key, intensity = 1) {
+    // isSticky=false(자동 발화 감정)면 발화가 끝난 뒤 표정이 얼어붙지 않고 천천히 풀린다.
+    function setEmotion(key, intensity = 1, isSticky = true) {
       const base = EMOTIONS[key] || EMOTIONS.neutral;
       emotion = {};
       for (const k in base) emotion[k] = base[k] * intensity;
+      sticky = isSticky; hold = 1;
       buttons.forEach(x => x.style.background = x.dataset.emo === key ? activeColor : "#2a2a35");
     }
-    buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });
+    buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });   // 버튼은 sticky 기본
     return {
       setEmotion,
-      // 감정 프리셋을 현재 평활값에 max-결합
-      applyMax(smooth) { for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k]); },
+      // 감정 프리셋을 현재 평활값에 max-결합. speaking=발화 중이면 유지, 자동 감정은 유휴 시 ~1.5s 감쇠.
+      applyMax(smooth, speaking) {
+        hold = (sticky || speaking) ? 1 : hold * 0.98;
+        for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k] * hold);
+      },
     };
   }
 
@@ -432,7 +439,7 @@ window.AvatarCore = (() => {
     const r = emotion ? { emo: emotion, intensity: 0.9 } : inferEmotion(text);
     let prosody = null;
     if (r && autoEmo) {
-      emo.setEmotion(r.emo, r.intensity);
+      emo.setEmotion(r.emo, r.intensity, false);   // 자동 감정 — 발화 끝나면 중립 복귀
       prosody = voiceProsody(r.emo, r.intensity);
     }
     return speakFlow({ text, voice, engine, audioEl, onAnim, prosody });

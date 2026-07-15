@@ -62,9 +62,15 @@ def _system(persona: str | None) -> str:
 _DROP = re.compile(r"[\U00010000-\U0010ffff☀-➿*_`#>\[\]]")
 
 
+# 소형 모델(2.4B)이 가끔 존댓말 종결어미를 겹쳐 뱉는다("좋아해요요"). 문장 경계의 요/죠 중복만 접는다.
+# ponytail: 낱말 '요요(장난감)'가 문장 끝일 때만 오검출 — 드물어 감수. '네네' 같은 맞장구는 제외해 보존.
+_DUP_END = re.compile(r"([요죠])\1+(?=[.!?…\s\"'”’)]|$)")
+
+
 def _clean(s: str) -> str:
     """프롬프트를 뚫고 나온 이모지·마크다운·줄바꿈을 걷어내 음성으로 읽을 수 있게 만든다."""
-    return re.sub(r"\s+", " ", _DROP.sub("", str(s))).strip()
+    s = re.sub(r"\s+", " ", _DROP.sub("", str(s))).strip()
+    return _DUP_END.sub(r"\1", s)
 
 
 def chat(text: str, history: list[dict] | None = None, persona: str | None = None) -> dict:

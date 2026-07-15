@@ -240,7 +240,7 @@ function render(now) {
   const smileOv = +$("ovSmile").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k in ov) smooth[k] = Math.max(smooth[k] || 0, ov[k]);
-  emo.applyMax(smooth);
+  emo.applyMax(smooth, !!(anim && !audio.paused && !audio.ended));   // 발화 중이면 감정 유지, 유휴면 자동 감정 감쇠
   const blink = Math.max(blinker.value(now), +$("ovBlink").value,
                          Math.max(W("eyeblinkleft"), W("eyeblinkright")));
 
