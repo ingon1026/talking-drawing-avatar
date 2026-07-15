@@ -76,6 +76,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 - **NVIDIA A2F-3D 엔진**(선택): C++/TensorRT 빌드 필요 — [`Audio2Face-3D-SDK/_project_build/SETUP.md`](https://github.com/NVIDIA/Audio2Face-3D-SDK) 절차 참조 (WSL2 + RTX 4070 Ti에서 검증).
 - **JoyVASA 영상 모드**(선택): 사진풍 인물 그림을 통째로 애니메이션하는 별도 모드 (`/`).
 - 상시 실행: systemd 유저 서비스로 등록해 자동 기동 가능. HF Spaces 배포용 `Dockerfile` / `requirements-space.txt` 포함 (Docker Space는 HF PRO 필요).
+- **로컬 풀버전을 남에게 보여주기**: `bash tools/share_tunnel.sh` → Cloudflare quick tunnel로 공개 URL 생성 (무료·계정 불필요). 대화·A2F 포함 전 기능이 그대로 공개된다. 내 PC가 켜져 있을 때만 접속되고 실행마다 URL이 바뀐다. 인증이 없으니 아는 사람에게만 공유.
 
 ## 📁 구조
 
