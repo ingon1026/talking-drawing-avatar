@@ -37,6 +37,7 @@ class SpeakReq(BaseModel):
     voice: str = DEFAULT_VOICE
     blink_interval: float = 4.0  # 평균 깜빡임 간격(초), 0 = 깜빡임 없음
     blink_strength: float = 1.0  # 0~1
+    image_b64: str | None = None  # 업로드 사진(dataURL/base64). 없으면 폴더 기본 이미지
 
 
 class SpeakRtReq(BaseModel):
@@ -64,16 +65,29 @@ def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody
 
 
 def run_video_job(job_id: str, job: dict):
-    """Phase A: 텍스트 → 립싱크 mp4."""
+    """Phase A: 텍스트(+선택 업로드 사진) → 립싱크 mp4."""
+    req = job["req"]
     job["status"] = "tts"
     wav = OUT / f"{job_id}.wav"
-    tts_to_wav(job["req"].text, job["req"].voice, wav)
+    tts_to_wav(req.text, req.voice, wav)
+
+    # 업로드 사진이 있으면 그 사진으로 애니메이션(실사 → 얼굴 크롭 켬)
+    img_path, do_crop = None, None
+    if req.image_b64:
+        updir = ROOT / "uploads"
+        updir.mkdir(exist_ok=True)
+        img_path = updir / f"{job_id}.png"
+        img_path.write_bytes(base64.b64decode(req.image_b64.split(",")[-1]))
+        do_crop = True
 
     job["status"] = "animating"
     mp4 = OUT / f"{job_id}.mp4"
-    pipeline.generate(wav, mp4,
-                      blink_interval=job["req"].blink_interval,
-                      blink_strength=job["req"].blink_strength)
+    try:
+        pipeline.generate(wav, mp4, blink_interval=req.blink_interval,
+                          blink_strength=req.blink_strength, image=img_path, do_crop=do_crop)
+    finally:
+        if img_path and img_path.exists():
+            img_path.unlink()   # 업로드 원본은 영상 만든 뒤 정리
     job["status"] = "done"
     job["video_url"] = f"/media/{job_id}.mp4"
 

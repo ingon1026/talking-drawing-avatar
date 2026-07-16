@@ -77,11 +77,16 @@ class AvatarPipeline:
         return self._pipe
 
     def generate(self, wav: Path, out_mp4: Path,
-                 blink_interval: float = 4.0, blink_strength: float = 1.0) -> Path:
-        """wav + 그림 → 립싱크 mp4 (blink_interval초마다 강제 깜빡임, 0 = 주입 없음)."""
-        img = find_avatar_image()
-        if img is None:
-            raise RuntimeError("그림 파일이 없습니다. /home/ingon/face/ 에 PNG/JPG를 넣어주세요.")
+                 blink_interval: float = 4.0, blink_strength: float = 1.0,
+                 image: Path = None, do_crop: bool = None) -> Path:
+        """wav + 그림 → 립싱크 mp4 (blink_interval초마다 강제 깜빡임, 0 = 주입 없음).
+
+        image: 지정하면 그 사진으로 애니메이션(실사 업로드용), 없으면 폴더 기본 이미지.
+        do_crop: 실사 얼굴이면 True(InsightFace 크롭). 미지정 시 인스턴스 기본값.
+        """
+        img = Path(image) if image else find_avatar_image()
+        if img is None or not Path(img).exists():
+            raise RuntimeError("그림/사진 파일이 없습니다.")
 
         pipe = self._pipe or self._load()
 
@@ -91,7 +96,8 @@ class AvatarPipeline:
 
         args = self._ArgumentConfig(
             animation_mode=self.animation_mode, reference=str(img), audio=str(wav),
-            output_dir=str(out_mp4.parent), cfg_scale=self.cfg_scale, flag_do_crop=self.do_crop)
+            output_dir=str(out_mp4.parent), cfg_scale=self.cfg_scale,
+            flag_do_crop=self.do_crop if do_crop is None else do_crop)
         args.eye_ratio_schedule = sched
 
         final = Path(pipe.execute(args))

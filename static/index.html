@@ -41,16 +41,21 @@
 </head>
 <body>
 <main>
-  <h1>🎨 말하는 그림 아바타 <a href="/puppet" style="color:#9a9ab0;font-size:.85rem;text-decoration:none;float:right">실시간 퍼펫 모드 →</a></h1>
+  <h1>🎨 말하는 사진·그림 <a href="/puppet" style="color:#9a9ab0;font-size:.85rem;text-decoration:none;float:right">실시간 퍼펫 모드 →</a></h1>
 
-  <div class="stage">
+  <div class="stage" id="stage" title="사진을 끌어다 놓아도 됩니다">
     <img id="avatar" src="/api/avatar" alt="" onerror="this.style.display='none'">
     <video id="player" style="display:none" playsinline></video>
     <div id="placeholder" class="placeholder" style="display:none"></div>
   </div>
 
+  <div class="controls" style="margin-top:12px">
+    <button type="button" id="photoBtn" style="background:#2a2a35">📷 내 사진·그림 올리기</button>
+    <input type="file" id="photoFile" accept="image/*" style="display:none">
+  </div>
+
   <form id="form">
-    <input id="text" type="text" placeholder="캐릭터가 말할 문장을 입력하세요…" autocomplete="off">
+    <input id="text" type="text" placeholder="사진 속 얼굴이 말할 문장을 입력하세요…" autocomplete="off">
     <button id="send" type="submit">말하기</button>
   </form>
 
@@ -77,6 +82,27 @@
 const $ = id => document.getElementById(id);
 const statusMsg = { queued: "대기 중…", tts: "음성 생성 중…", animating: "얼굴 애니메이션 생성 중… (수십 초 걸릴 수 있어요)" };
 
+// 업로드한 사진(dataURL). 있으면 이 사진으로, 없으면 서버 폴더 기본 이미지로 생성.
+let uploadedPhoto = null;
+function acceptPhoto(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    uploadedPhoto = reader.result;
+    $("avatar").src = uploadedPhoto;
+    $("avatar").style.display = "";
+    $("player").style.display = "none";
+    $("placeholder").style.display = "none";
+    setStatus("사진 준비됨 — 문장을 입력하고 ‘말하기’를 누르세요. (실사 사진이 가장 잘 됩니다)");
+  };
+  reader.readAsDataURL(file);
+}
+$("photoBtn").onclick = () => $("photoFile").click();
+$("photoFile").onchange = e => { acceptPhoto(e.target.files[0]); e.target.value = ""; };
+const stage = $("stage");
+stage.addEventListener("dragover", e => e.preventDefault());
+stage.addEventListener("drop", e => { e.preventDefault(); acceptPhoto(e.dataTransfer.files[0]); });
+
 $("blink").oninput = e => $("blinkVal").textContent = e.target.value == 0 ? "끔" : e.target.value + "초";
 $("strength").oninput = e => $("strengthVal").textContent = Math.round(e.target.value * 100) + "%";
 
@@ -85,7 +111,7 @@ async function checkHealth() {
   const ph = $("placeholder");
   if (!h.image) {
     ph.style.display = "flex";
-    ph.textContent = "그림 파일이 아직 없어요.\n/home/ingon/face/ 에 PNG/JPG를 넣어주세요.";
+    ph.textContent = "📷 위 ‘내 사진·그림 올리기’로 사진을 올려보세요.\n실사 얼굴 사진이 가장 잘 됩니다.";
   } else if (!h.joyvasa_ready) {
     ph.style.display = "flex";
     ph.textContent = "모델 셋업 진행 중…";
@@ -110,6 +136,7 @@ $("form").onsubmit = async e => {
         voice: $("voice").value,
         blink_interval: +$("blink").value,
         blink_strength: +$("strength").value,
+        image_b64: uploadedPhoto,
       }),
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
