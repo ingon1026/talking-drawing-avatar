@@ -60,9 +60,14 @@ class AvatarPipeline:
         self.do_crop = False  # 그림에서 얼굴이 중앙 정렬 안 돼 있으면 True로
         self.cfg_scale = 2.0
         # fp16: 렌더 루프가 전체 시간의 대부분이라 체감이 크다. RTX 4070 Ti(Ada) 실측 —
-        # 웜 15.8s → 11.1s(1.42배), 화질 PSNR 32~40dB·평균차 1.7/255 로 육안 동일,
-        # 상류 주석이 경고한 검은 박스 아티팩트 없음. 구형 GPU에서 깨지면 False 로.
+        # 웜 15.8s → 11.1s(1.42배), 화질 육안 동일, 상류 주석이 경고한 검은 박스 없음.
+        # 구형 GPU에서 깨지면 False 로.
         self.half = True
+        # torch.compile: 프로세스당 첫 생성에 컴파일 ~28~52s(인덱터 디스크 캐시로 재기동 시 단축),
+        # 이후 8.7s 오디오 기준 8.9s = 거의 실시간(1.0x). 오디오 길이가 달라져도 재컴파일 없음
+        # (2.2s→2.6s, 12.5s→12.4s 실측). 화질 차이는 디퓨전 자체 변동(같은 설정 재실행 30.9~42.1dB)
+        # 범위 안. triton 2.2.0 필요 — 없으면 ImportError 나므로 False 로.
+        self.compile = True
         self._pipe = None
         self._ArgumentConfig = None
 
@@ -74,7 +79,8 @@ class AvatarPipeline:
 
         base = ArgumentConfig(animation_mode=self.animation_mode,
                               flag_do_crop=self.do_crop, cfg_scale=self.cfg_scale,
-                              flag_use_half_precision=self.half)
+                              flag_use_half_precision=self.half,
+                              flag_do_torch_compile=self.compile)
         self._pipe = LivePortraitPipeline(
             inference_cfg=_partial_fields(InferenceConfig, base.__dict__),
             crop_cfg=_partial_fields(CropConfig, base.__dict__))
