@@ -59,6 +59,10 @@ class AvatarPipeline:
         self.animation_mode = "human"  # 손그림 검출 실패 시 "animal" 폴백
         self.do_crop = False  # 그림에서 얼굴이 중앙 정렬 안 돼 있으면 True로
         self.cfg_scale = 2.0
+        # fp16: 렌더 루프가 전체 시간의 대부분이라 체감이 크다. RTX 4070 Ti(Ada) 실측 —
+        # 웜 15.8s → 11.1s(1.42배), 화질 PSNR 32~40dB·평균차 1.7/255 로 육안 동일,
+        # 상류 주석이 경고한 검은 박스 아티팩트 없음. 구형 GPU에서 깨지면 False 로.
+        self.half = True
         self._pipe = None
         self._ArgumentConfig = None
 
@@ -69,7 +73,8 @@ class AvatarPipeline:
         from src.live_portrait_wmg_pipeline import LivePortraitPipeline
 
         base = ArgumentConfig(animation_mode=self.animation_mode,
-                              flag_do_crop=self.do_crop, cfg_scale=self.cfg_scale)
+                              flag_do_crop=self.do_crop, cfg_scale=self.cfg_scale,
+                              flag_use_half_precision=self.half)
         self._pipe = LivePortraitPipeline(
             inference_cfg=_partial_fields(InferenceConfig, base.__dict__),
             crop_cfg=_partial_fields(CropConfig, base.__dict__))
