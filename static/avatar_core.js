@@ -160,12 +160,23 @@ window.AvatarCore = (() => {
   // cursor: makeCursorTracker 결과, mulX/mulY: 커서 배율(puppet 0.9/0.6, studio3d 0.8/0.5).
   // 반환: (sliderVal, W) => [gx, gy]. docs 는 커서 전용이라 이 팩토리 대신 인라인 유지.
   function makeGaze(cursor, { mulX, mulY }) {
-    let gx = 0, gy = 0;
+    let gx = 0, gy = 0, sacX = 0, sacY = 0, sacNext = 0;
     return (sliderVal, W) => {
       const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
       const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
-      gx += ((Math.abs(sliderVal) > 0.01 ? sliderVal : (chX || cursor.gx * mulX)) - gx) * 0.15;
-      gy += ((chY || cursor.gy * mulY) - gy) * 0.15;
+      // 슬라이더·엔진채널·커서 다 없으면 유휴 → 눈동자 미세 saccade(죽은 눈 방지)
+      const idle = Math.abs(sliderVal) <= 0.01 && !chX && !chY
+        && Math.abs(cursor.gx) < 0.02 && Math.abs(cursor.gy) < 0.02;
+      if (idle && performance.now() > sacNext) {
+        sacNext = performance.now() + 1200 + Math.random() * 2000;
+        const center = Math.random() < 0.35;  // 가끔 정면 복귀
+        sacX = center ? 0 : (Math.random() - 0.5) * 0.5;
+        sacY = center ? 0 : (Math.random() - 0.5) * 0.3;
+      }
+      const tgtX = Math.abs(sliderVal) > 0.01 ? sliderVal : (chX || (idle ? sacX : cursor.gx * mulX));
+      const tgtY = chY || (idle ? sacY : cursor.gy * mulY);
+      gx += (tgtX - gx) * 0.15;
+      gy += (tgtY - gy) * 0.15;
       return [gx, gy];
     };
   }
@@ -184,8 +195,9 @@ window.AvatarCore = (() => {
       }
       wanderR += (wanderGoalR - wanderR) * 0.02;
       wanderY += (wanderGoalY - wanderY) * 0.02;
+      const breath = Math.sin(t * 1.2) * 2;  // ~5s 주기 호흡 — sway 무관(유휴에도 숨 쉼)
       const rot = Math.sin(t * 0.9) * 0.008 * sway + wanderR + nod * 0.015;
-      const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3;
+      const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3 + breath;
       // 머리 흔들림은 두 캔버스(WebGL base + 2D 오버레이)를 함께 감싼 래퍼에 CSS 변환으로 적용.
       // transform-origin=center + translateY(% of height) 조합이 기존 ctx translate/rotate와 수학적으로 동일.
       shakeEl.style.transform = `rotate(${rot.toFixed(5)}rad) translateY(${(dy / 512 * 100).toFixed(4)}%)`;
