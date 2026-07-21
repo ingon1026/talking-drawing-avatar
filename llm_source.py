@@ -20,7 +20,7 @@ import requests
 
 API = "http://localhost:11434/api/chat"
 MODEL = "exaone3.5:2.4b"
-KEEP_ALIVE = "10m"   # 첫 호출 후 상주 (대화 도중 언로드 방지)
+KEEP_ALIVE = -1   # 상시 상주 — 유휴 언로드 후 첫 대화 ~3s 재로드 제거 (VRAM 1.8GB, 여유 충분)
 NUM_CTX = 2048       # KV 캐시 = VRAM. 대화 히스토리 몇 턴에 충분하다.
 HISTORY_TURNS = 6    # 최근 메시지 6개(=3턴)만 넘겨 컨텍스트·지연을 묶어 둔다.
 TIMEOUT = 60

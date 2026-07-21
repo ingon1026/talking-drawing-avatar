@@ -15,7 +15,6 @@ window.AvatarCore = (() => {
   const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
   const avgLR = (W, base) => (W(base + "left") + W(base + "right")) / 2;   // 좌우 채널 평균
   const roundness = W => Math.max(W("mouthpucker"), W("mouthfunnel"));       // 오므림 세기
-  const POLL_MS = 350;                                                       // 잡 폴링 간격
   const WARP_JAW_G = Math.exp(-(38 * 38) / (2 * 55 * 55));                   // jaw 변위장을 입 앵커(38px 위)에서 평가한 가우시안 (시그마 55 = 워프 셰이더와 동일)
 
   // 텍스트 감정 추론 (발화 시 자동 프리셋 — 세 페이지 동일 규칙)
@@ -471,22 +470,15 @@ window.AvatarCore = (() => {
     };
   }
 
-  // ---------- 발화 요청 → 잡 폴링 → 결과 (내부) ----------
+  // ---------- 발화 요청 → 결과 (내부) ----------
+  // 서버가 동기 응답(0.6초급 작업) — 잡 폴링 제거로 발화당 ~0.2~0.35s 단축.
   async function speakRT({ text, voice, engine, prosody }) {
     const res = await fetch("/api/speak_rt", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, voice, engine, ...(prosody || {}) }),
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-    const { job_id } = await res.json();
-    let job;
-    while (true) {
-      job = await fetch(`/api/jobs/${job_id}`).then(r => r.json());
-      if (job.status === "done" || job.status === "error") break;
-      await new Promise(r => setTimeout(r, POLL_MS));
-    }
-    if (job.status === "error") throw new Error(job.error);
-    return job.result;
+    return res.json();
   }
 
   // ---------- 발화 플로우 (puppet·studio3d 공용) ----------

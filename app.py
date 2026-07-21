@@ -105,22 +105,20 @@ def run_video_job(job_id: str, job: dict):
     job["video_url"] = f"/media/{job_id}.mp4"
 
 
-def run_rt_job(job_id: str, job: dict):
-    """Phase B: 텍스트 → mp3 + 블렌드셰이프 프레임 (퍼펫 렌더러용)."""
-    job["status"] = "tts"
+def rt_result(r: SpeakRtReq, job_id: str) -> dict:
+    """Phase B: 텍스트 → mp3 + 블렌드셰이프 프레임 (퍼펫 렌더러용). 0.6초급이라 동기 처리."""
     wav = OUT / f"{job_id}.wav"
-    r = job["req"]
-    tts_to_wav(r.text, r.voice, wav, keep_mp3=True,
-               prosody={"rate": r.rate, "pitch": r.pitch, "volume": r.volume})
-
-    job["status"] = "animating"
-    if job["req"].engine == "a2f":
-        import a2f_source as source  # lazy: 모듈/엔진은 첫 요청 때 로드
-    else:
-        import blendshape_source as source
-    bs = source.audio_to_blendshapes(str(wav))
-    job["result"] = {"audio_url": f"/media/{job_id}.mp3", **bs}
-    job["status"] = "done"
+    try:
+        tts_to_wav(r.text, r.voice, wav, keep_mp3=True,
+                   prosody={"rate": r.rate, "pitch": r.pitch, "volume": r.volume})
+        if r.engine == "a2f":
+            import a2f_source as source  # lazy: 모듈/엔진은 첫 요청 때 로드
+        else:
+            import blendshape_source as source
+        bs = source.audio_to_blendshapes(str(wav))
+        return {"audio_url": f"/media/{job_id}.mp3", **bs}
+    finally:
+        wav.unlink(missing_ok=True)
 
 
 _last_purge = 0.0
@@ -141,16 +139,17 @@ def purge_old_media(hours: int = 24):
             f.unlink(missing_ok=True)
 
 
+gpu_lock = threading.Lock()   # 영상 잡(워커)과 동기 rt 발화가 GPU를 겹쳐 쓰지 않게 직렬화
+
+
 def worker():
-    # ponytail: GPU가 직렬이라 워커 1개 큐로 충분
+    # ponytail: GPU가 직렬이라 워커 1개 큐로 충분 — rt 발화는 동기 엔드포인트로 이동, 여긴 영상 전용
     while True:
         job_id = work_q.get()
         job = jobs[job_id]
         purge_old_media()
         try:
-            if job.get("kind") == "rt":
-                run_rt_job(job_id, job)
-            else:
+            with gpu_lock:
                 run_video_job(job_id, job)
         except Exception as e:
             job["status"] = "error"
@@ -162,6 +161,26 @@ def worker():
 
 
 threading.Thread(target=worker, daemon=True).start()
+
+
+def warmup():
+    """기동 직후 경량 발화 엔진만 미리 로드 — 재시작 후 첫 발화 3.9s(neurosync)/2.4s(a2f) 제거.
+    JoyVASA(영상, 콜드 26s+)는 제외: 영상 안 쓰는 세션까지 매 재기동마다 GPU를 태우게 된다."""
+    import wave
+    w = OUT / "warmup.wav"
+    with wave.open(str(w), "w") as f:
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(16000)
+        f.writeframes(b"\x00\x00" * 4800)   # 0.3s 무음
+    for mod in ("blendshape_source", "a2f_source"):
+        try:
+            with gpu_lock:
+                __import__(mod).audio_to_blendshapes(str(w))
+        except Exception:
+            pass   # 엔진 하나가 없거나 실패해도 서버는 정상 기동
+    w.unlink(missing_ok=True)
+
+
+threading.Thread(target=warmup, daemon=True).start()
 
 
 @app.post("/api/speak")
@@ -176,12 +195,15 @@ def speak(req: SpeakReq):
 
 @app.post("/api/speak_rt")
 def speak_rt(req: SpeakRtReq):
+    """0.6초급 작업이라 잡큐+폴링(발화당 +0.2~0.35s 낭비) 대신 동기 응답."""
     if not req.text.strip():
         raise HTTPException(400, "텍스트가 비어 있습니다.")
-    job_id = uuid.uuid4().hex[:12]
-    jobs[job_id] = {"status": "queued", "req": req, "kind": "rt"}
-    work_q.put(job_id)
-    return {"job_id": job_id}
+    purge_old_media()
+    with gpu_lock:   # 영상 생성 중이면 끝날 때까지 대기 (기존 큐 대기와 동일한 순서 보장)
+        try:
+            return rt_result(req, uuid.uuid4().hex[:12])
+        except Exception as e:
+            raise HTTPException(500, str(e))
 
 
 class ChatReq(BaseModel):
