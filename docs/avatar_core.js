@@ -108,11 +108,13 @@ window.AvatarCore = (() => {
     // intensity: 자동 추론 시 감정 세기(0~1)로 프리셋 값을 스케일. 버튼 클릭은 항상 1.
     // 항상 새 객체로 스케일 — 공유 EMOTIONS 프리셋 앨리어싱 회피(v*1===v 라 무손실).
     // isSticky=false(자동 발화 감정)면 발화가 끝난 뒤 표정이 얼어붙지 않고 천천히 풀린다.
+    let curKey = "neutral", curInt = 1;   // 몸짓 연동용 현재 감정 (current() 로 노출)
     function setEmotion(key, intensity = 1, isSticky = true) {
       const base = EMOTIONS[key] || EMOTIONS.neutral;
       emotion = {};
       for (const k in base) emotion[k] = base[k] * intensity;
       sticky = isSticky; hold = 1;
+      curKey = key; curInt = intensity;
       buttons.forEach(x => x.style.background = x.dataset.emo === key ? activeColor : "#2a2a35");
     }
     buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });   // 버튼은 sticky 기본
@@ -123,6 +125,8 @@ window.AvatarCore = (() => {
         hold = (sticky || speaking) ? 1 : hold * 0.98;
         for (const k in emotion) smooth[k] = Math.max(smooth[k] || 0, emotion[k] * hold);
       },
+      // 현재 감정과 세기(표정과 같은 hold 감쇠를 공유) — makeHeadWander 몸짓 연동용.
+      current() { return { key: curKey, level: curInt * hold }; },
     };
   }
 
@@ -186,11 +190,27 @@ window.AvatarCore = (() => {
 
   // ---------- 머리 워블 (2D: 발화 끄덕임 nod + 느린 표류 wander + 잔잔한 사인) ----------
   // shakeEl 에 CSS 변환 적용. sway 는 페이지가 넘김(발화 중 1, 아니면 0.5). studio3d 는 3D라 미사용.
+  // 감정 → 몸짓 계수 (speed 배속·amp 진폭·droop px 아래로·beat 끄덕임 배율). 없는 키(neutral)는 전부 1/0.
+  const EMO_MOTION = {
+    joy:      { speed: 1.25, amp: 1.5,  droop: -2, beat: 1.3 },  // 들썩임 커지고 살짝 들림
+    sad:      { speed: 0.55, amp: 0.5,  droop: 9,  beat: 0.4 },  // 고개 숙이고 느리고 작게
+    angry:    { speed: 1.5,  amp: 1.25, droop: 0,  beat: 1.6 },  // 빠르고 절도 있게
+    surprise: { speed: 1.2,  amp: 1.3,  droop: -4, beat: 1.0 },  // 번쩍 들림
+  };
+
   function makeHeadWander() {
     let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
     let beat = 0, beatTilt = 0, lowSince = 0;  // 강조 제스처: 구절 시작마다 끄덕임 임펄스
-    return function tick(shakeEl, now, jawopen, sway) {
-      const t = now / 1000;
+    let phR = 0, phY = 0, phB = 0, last = 0;   // 사인 위상 누적 — 감정 배속이 변해도 위상 연속(점프 없음)
+    return function tick(shakeEl, now, jawopen, sway, emoState) {
+      const m = emoState && EMO_MOTION[emoState.key], lv = m ? Math.min(emoState.level, 1) : 0;
+      const speed = 1 + ((m ? m.speed : 1) - 1) * lv;
+      const amp = 1 + ((m ? m.amp : 1) - 1) * lv;
+      const beatG = 1 + ((m ? m.beat : 1) - 1) * lv;
+      const droop = (m ? m.droop : 0) * lv;
+      const dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
+      last = now;
+      phR += dt * 0.9 * speed; phY += dt * 1.7 * speed; phB += dt * 1.2 * speed;
       nod = 0.85 * nod + 0.15 * jawopen;
       // 조용(≥250ms)하다 입이 열리는 순간 = 구절 시작 → 끄덕임 비트 + 고개 기울임 변주.
       // 매 음절마다가 아니라 pause 뒤 온셋에만 걸려 "말의 리듬"이 됨.
@@ -211,9 +231,9 @@ window.AvatarCore = (() => {
       }
       wanderR += (wanderGoalR - wanderR) * 0.02;
       wanderY += (wanderGoalY - wanderY) * 0.02;
-      const breath = Math.sin(t * 1.2) * 2;  // ~5s 주기 호흡 — sway 무관(유휴에도 숨 쉼)
-      const rot = Math.sin(t * 0.9) * 0.008 * sway + wanderR + nod * 0.015 + beatTilt * beat;
-      const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3 + breath + beat * 7;
+      const breath = Math.sin(phB) * 2 * amp;  // ~5s 주기 호흡 — sway 무관(유휴에도 숨 쉼)
+      const rot = Math.sin(phR) * 0.008 * sway * amp + wanderR + nod * 0.015 + beatTilt * beat * beatG;
+      const dy = Math.sin(phY) * 1.5 * sway * amp + wanderY + nod * 3 + breath + beat * 7 * beatG + droop;
       // 머리 흔들림은 두 캔버스(WebGL base + 2D 오버레이)를 함께 감싼 래퍼에 CSS 변환으로 적용.
       // transform-origin=center + translateY(% of height) 조합이 기존 ctx translate/rotate와 수학적으로 동일.
       shakeEl.style.transform = `rotate(${rot.toFixed(5)}rad) translateY(${(dy / 512 * 100).toFixed(4)}%)`;
@@ -508,6 +528,8 @@ window.AvatarCore = (() => {
     };
     return {
       toggle() { if (listening) rec.stop(); else { try { rec.start(); } catch (_) {} } },
+      start() { if (!listening) { try { rec.start(); } catch (_) {} } },
+      stop() { if (listening) rec.stop(); },
     };
   }
 
@@ -528,8 +550,9 @@ window.AvatarCore = (() => {
   //   logEl/chatModeEl/clearBtnEl/textEl/sendEl/micBtnEl/formEl 엘리먼트, statusSet(bindStatus 결과),
   //   getPersona()(선택 — 현재 캐릭터 성격; 없으면 기본 정체성). placeholderOff 는 입력창 초기 placeholder 재사용.
   // 반환 { runChat } — onsubmit 의 chat|say 분기는 페이지가 얇게 소유(runChat 알맹이만 코어).
-  function makeChat({ speak, logEl, botName, placeholderOn, chatModeEl, clearBtnEl, textEl, sendEl, micBtnEl, formEl, statusSet, getPersona }) {
+  function makeChat({ speak, logEl, botName, placeholderOn, chatModeEl, clearBtnEl, textEl, sendEl, micBtnEl, formEl, statusSet, getPersona, audioEl }) {
     const history = [];   // [{role, content}] 최근 턴만 유지
+    let handsFree = false, busy = false;   // 연속 대화: 응답 재생이 끝나면 자동 재청취
     const placeholderOff = textEl.placeholder;
     function addTurn(who, text, cls) {
       const div = document.createElement("div");
@@ -548,13 +571,22 @@ window.AvatarCore = (() => {
     };
     clearBtnEl.onclick = () => { history.length = 0; logEl.innerHTML = ""; statusSet(""); };
     async function runChat(text) {
-      addTurn("나", text, "me");
-      statusSet("생각 중…");
-      const { reply, emotion } = await chat(text, history.slice(-6), getPersona && getPersona());   // 최근 3턴 + 캐릭터 성격
-      history.push({ role: "user", content: text }, { role: "assistant", content: reply });
-      addTurn(botName, reply, "bot");
-      statusSet("말하는 중…");
-      await speak(reply, emotion);
+      busy = true;   // 아바타가 생각·발화하는 동안 재청취 금지 (자기 목소리 인식 방지)
+      try {
+        addTurn("나", text, "me");
+        statusSet("생각 중…");
+        const { reply, emotion } = await chat(text, history.slice(-6), getPersona && getPersona());   // 최근 3턴 + 캐릭터 성격
+        history.push({ role: "user", content: text }, { role: "assistant", content: reply });
+        addTurn(botName, reply, "bot");
+        statusSet("말하는 중…");
+        await speak(reply, emotion);
+        // speak 는 재생 시작 시점에 반환 — 연속 대화면 재생이 실제로 끝날 때까지 대기 후 재청취
+        if (handsFree && audioEl && !audioEl.paused && !audioEl.ended)
+          await new Promise(res => audioEl.addEventListener("ended", res, { once: true }));
+      } finally {
+        busy = false;
+        if (handsFree && mic) { statusSet(""); mic.start(); }
+      }
     }
     // 마이크 (브라우저 음성인식 — 미지원 브라우저면 makeMic null → 버튼 숨김 유지)
     const mic = makeMic({
@@ -563,14 +595,27 @@ window.AvatarCore = (() => {
         if (isFinal) formEl.requestSubmit();   // 말이 끝나면 자동 전송
       },
       onState: (st, err) => {
-        micBtnEl.classList.toggle("on", st === "listening");
-        if (st === "listening") statusSet("듣고 있어요… 말씀하세요");
-        else if (st === "error") statusSet(err === "not-allowed" ? "마이크 권한이 필요합니다." : `음성 인식 오류: ${err}`, true);
+        micBtnEl.classList.toggle("on", st === "listening" || handsFree);
+        if (st === "listening") statusSet(handsFree ? "듣고 있어요… (연속 대화 — 마이크 버튼으로 종료)" : "듣고 있어요… 말씀하세요");
+        else if (st === "error") {
+          if (err === "not-allowed") { handsFree = false; statusSet("마이크 권한이 필요합니다.", true); }
+          else statusSet(`음성 인식 오류: ${err}`, true);
+        } else if (st === "idle" && handsFree && !busy) {
+          // 침묵 타임아웃으로 끊겨도 연속 모드면 잠시 후 재청취 (발화 처리 중이면 runChat 끝에서 재개)
+          setTimeout(() => { if (handsFree && !busy) mic.start(); }, 400);
+        }
       },
     });
     if (mic) {
       micBtnEl.style.display = "";
-      micBtnEl.onclick = () => { if (!chatModeEl.checked) chatModeEl.click(); mic.toggle(); };
+      // 마이크 버튼 = 연속 대화 토글: 켜면 듣기→응답→재청취 루프, 다시 누르면 종료
+      micBtnEl.onclick = () => {
+        if (!chatModeEl.checked) chatModeEl.click();
+        handsFree = !handsFree;
+        micBtnEl.classList.toggle("on", handsFree);
+        if (handsFree) mic.start();
+        else { mic.stop(); statusSet(""); }
+      };
     }
     return { runChat };
   }

@@ -276,7 +276,7 @@ function render(now) {
 
   // 머리: 발화 에너지 끄덕임 + 느린 표류 + 잔잔한 사인
   const sway = talk ? 1 : 0.5;
-  headWander(shakeEl, now, W("jawopen"), sway);
+  headWander(shakeEl, now, W("jawopen"), sway, emo.current());   // 감정 → 몸짓 연동
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }

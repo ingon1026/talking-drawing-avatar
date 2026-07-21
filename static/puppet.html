@@ -246,7 +246,7 @@ function render(now) {
 
   // 머리 움직임: 발화 에너지(끄덕임) + 느린 표류 + 잔잔한 사인
   const sway = anim && !audio.paused ? 1 : 0.5;
-  headWander(shakeEl, now, W("jawopen"), sway);
+  headWander(shakeEl, now, W("jawopen"), sway, emo.current());   // 감정 → 몸짓 연동
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }
@@ -291,6 +291,7 @@ const chatCtl = AvatarCore.makeChat({
   chatModeEl: $("chatMode"), clearBtnEl: $("clearChat"), textEl: $("text"),
   sendEl: $("send"), micBtnEl: $("micBtn"), formEl: $("form"), statusSet: setStatus,
   getPersona: () => manifest.persona,   // 선택된 캐릭터 성격을 대화에 반영
+  audioEl: audio,   // 연속 대화: 응답 재생이 끝나야 재청취
 });
 
 $("form").onsubmit = async e => {
