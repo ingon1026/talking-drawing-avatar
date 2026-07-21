@@ -162,19 +162,22 @@ window.AvatarCore = (() => {
   function makeGaze(cursor, { mulX, mulY }) {
     let gx = 0, gy = 0, sacX = 0, sacY = 0, sacNext = 0;
     return (sliderVal, W) => {
+      const now = performance.now();
       const chX = (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2;
       const chY = (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2;
+      const manual = Math.abs(sliderVal) > 0.01;
       // 슬라이더·엔진채널·커서 다 없으면 유휴 → 눈동자 미세 saccade(죽은 눈 방지)
-      const idle = Math.abs(sliderVal) <= 0.01 && !chX && !chY
+      const idle = !manual && !chX && !chY
         && Math.abs(cursor.gx) < 0.02 && Math.abs(cursor.gy) < 0.02;
-      if (idle && performance.now() > sacNext) {
-        sacNext = performance.now() + 1200 + Math.random() * 2000;
+      if (idle && now > sacNext) {
+        sacNext = now + 1200 + Math.random() * 2000;
         const center = Math.random() < 0.35;  // 가끔 정면 복귀
         sacX = center ? 0 : (Math.random() - 0.5) * 0.5;
         sacY = center ? 0 : (Math.random() - 0.5) * 0.3;
       }
-      const tgtX = Math.abs(sliderVal) > 0.01 ? sliderVal : (chX || (idle ? sacX : cursor.gx * mulX));
-      const tgtY = chY || (idle ? sacY : cursor.gy * mulY);
+      // 우선순위: 유휴 saccade, 아니면 슬라이더 > 엔진채널 > 커서
+      const tgtX = idle ? sacX : (manual ? sliderVal : (chX || cursor.gx * mulX));
+      const tgtY = idle ? sacY : (chY || cursor.gy * mulY);
       gx += (tgtX - gx) * 0.15;
       gy += (tgtY - gy) * 0.15;
       return [gx, gy];
@@ -262,16 +265,19 @@ window.AvatarCore = (() => {
     // 닫힘곡선 제어점 압력: 근육 press 와 mouthclose 유래 압력 중 강한 쪽 (하이브리드 — puppet·docs 양쪽 회귀 0)
     const pressCurve = Math.max(pressM, W("mouthclose") * 0.5);
 
-    const openH = Math.max(0, jaw * 58 + lowerDown * 10 - Math.max(pressM * 8, W("mouthclose") * 30));
+    // 오므림(오/우): 세로 개방에 바닥값(+round*18)을 줘 낮은 턱에서도 둥근 구멍이 생기게 한다.
+    const openH = Math.max(0, jaw * 58 + lowerDown * 10 + round * 18 - Math.max(pressM * 8, W("mouthclose") * 30));
     const wBase = st.width || 34;
-    const halfL = wBase * (1 + 0.45 * W("mouthstretchleft") + 0.3 * smL - 0.5 * round);
-    const halfR = wBase * (1 + 0.45 * W("mouthstretchright") + 0.3 * smR - 0.5 * round);
+    const halfL = wBase * (1 + 0.45 * W("mouthstretchleft") + 0.3 * smL - 0.6 * round);  // 오므림일수록 폭 좁힘
+    const halfR = wBase * (1 + 0.45 * W("mouthstretchright") + 0.3 * smR - 0.6 * round);
     const cy = mcy0 + jawDy;
     const xL = mcx - halfL, xR = mcx + halfR;
     const yCL = cy - 2 - smL * 12 + frL * 12;   // 입꼬리 좌우 독립 (비대칭 표정)
     const yCR = cy - 2 - smR * 12 + frR * 12;
-    const yU = cy - openH * 0.38 - upperUp * 8;
-    const yD = cy + openH * 0.62;
+    // 오므림 강할수록 위/아래 곡선을 대칭(0.5/0.5)으로 → 납작한 렌즈가 아니라 동그란 O.
+    const topF = 0.38 + 0.12 * round, botF = 1 - topF;
+    const yU = cy - openH * topF - upperUp * 8;
+    const yD = cy + openH * botF;
 
     ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round";
     ctx.strokeStyle = st.line || "#3a2e2a";
@@ -290,14 +296,16 @@ window.AvatarCore = (() => {
     path.closePath();
     ctx.fillStyle = st.fill || "#8a3535"; ctx.fill(path);
     ctx.save(); ctx.clip(path);
-    if (openH > 7) {  // 윗니
+    // 오/우는 입술이 모여 이·혀가 거의 안 보임 — 오므림에 비례해 연속 감쇠(경계 팝 없음).
+    const inner = Math.max(0, 1 - 1.3 * round);
+    if (openH > 7) {  // 윗니 (inner=0 이면 높이 0 = 안 그려짐)
       ctx.fillStyle = st.teeth || "#ffffff";
-      ctx.fillRect(xL, yU - 2, xR - xL, Math.min(9, openH * 0.32));
+      ctx.fillRect(xL, yU - 2, xR - xL, Math.min(9, openH * 0.32) * inner);
     }
     if (openH > 18) {  // 혀
       ctx.fillStyle = st.tongue || "#d97b7b";
       ctx.beginPath();
-      ctx.ellipse(mcx, yD, (xR - xL) * 0.3, openH * 0.28, 0, 0, Math.PI * 2);
+      ctx.ellipse(mcx, yD, (xR - xL) * 0.3, openH * 0.28 * inner, 0, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
