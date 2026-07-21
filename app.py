@@ -50,7 +50,20 @@ class SpeakRtReq(BaseModel):
     volume: float = 0.0
 
 
+MULTI_VOICE = "ko-KR-HyunsuMultilingualNeural"  # 영어/한영혼합용 — 한국어전용 음성은 영어를 뭉갬
+
+
+def _english_heavy(text: str) -> bool:
+    """영문 글자 수가 한글 음절 수보다 많으면 영어 위주 문장으로 본다."""
+    en = sum(c.isascii() and c.isalpha() for c in text)
+    ko = sum("가" <= c <= "힣" for c in text)
+    return en > ko
+
+
 def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody=None):
+    # 영어 위주인데 한국어전용 음성을 골랐으면 멀티링구얼로 자동 스왑(립싱크는 언어 무관).
+    if "Multilingual" not in voice and _english_heavy(text):
+        voice = MULTI_VOICE
     mp3 = wav.with_suffix(".mp3")
     # edge-tts 는 rate/volume 은 퍼센트, pitch 는 Hz 문자열(부호 필수)을 받는다.
     p = prosody or {}
