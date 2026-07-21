@@ -57,6 +57,8 @@
     <button type="button" class="alt" data-emo="sad">😢 슬픔</button>
     <button type="button" class="alt" data-emo="angry">😠 화남</button>
     <button type="button" class="alt" data-emo="surprise">😲 놀람</button>
+    <button type="button" class="alt" data-emo="fear">😱 무서움</button>
+    <button type="button" class="alt" data-emo="shy">😳 수줍음</button>
     <label><input type="checkbox" id="autoEmo" checked> 감정 자동</label>
   </div>
 
@@ -217,7 +219,6 @@ function currentWeights() {
 // ---------- 상태 ----------
 let smooth = {};
 const W = k => smooth[k] || 0;
-let gazeSX = 0, gazeSY = 0;  // 커서 시선(평활)
 
 const stage = document.querySelector(".stage");
 
@@ -229,6 +230,7 @@ const blinker = AvatarCore.makeBlink({
   duration: 140, jitter: 0.6,
 });
 const cursor = AvatarCore.makeCursorTracker(stage);
+const gaze = AvatarCore.makeGaze(cursor, { mulX: 0.9, mulY: 0.6 });   // 커서 + 감정 채널 + 유휴 saccade
 const headWander = AvatarCore.makeHeadWander();
 const mouthPicker = AvatarCore.makeMouthPicker(W);
 const warp = AvatarCore.makeWarp({
@@ -295,10 +297,9 @@ function render(now) {
   if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
   else {
     draw("eye_L_open"); draw("eye_R_open");
-    gazeSX += (cursor.gx * 0.9 - gazeSX) * 0.15;  // 커서 시선 추적 (평활)
-    gazeSY += (cursor.gy * 0.6 - gazeSY) * 0.15;
+    const [gzx, gzy] = gaze(0, W);   // 슬라이더 없음 → 커서/감정채널/유휴 saccade
     const pr = manifest.pupilRange || 0;
-    drawXY("pupil_L", gazeSX * pr, gazeSY * pr); drawXY("pupil_R", gazeSX * pr, gazeSY * pr);
+    drawXY("pupil_L", gzx * pr, gzy * pr); drawXY("pupil_R", gzx * pr, gzy * pr);
   }
   const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth === false && parts.mouth_closed) {

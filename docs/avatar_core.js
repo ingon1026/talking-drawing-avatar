@@ -40,13 +40,22 @@ window.AvatarCore = (() => {
       [/헉|깜짝|놀[라랐랍]|대박|세상에|어머|웬일|믿[을기]\s*수\s*없|😲|😮/g, 1.6],
       [/[?!]{2,}/g, 1.0], [/진짜\?|정말\?|\?/g, 0.3],
     ],
+    fear: [
+      [/무[서섭섰]|겁[나난났이]|소름|섬뜩|오싹|공포|끔찍|😱|😨/g, 1.8],
+      [/떨[려린렸]|불안|어떡해|어쩌지|살려/g, 1.2],
+    ],
+    shy: [
+      [/부끄|쑥스|민망|수줍|창피|😳|☺️/g, 1.8],
+      [/어머나|아이참|헤헤|히히/g, 1.0],
+    ],
   };
   // 부정 표현 — "안 좋아", "좋지 않아", "재미없어"는 기쁨이 아니다.
   const NEGATION = /안\s*(좋|기쁘|행복|즐거|반가)|(좋|기쁘|행복|즐겁)지\s*(않|못)|재미\s*없|별로|싫증/;
 
   /** 텍스트 → {emo, intensity} | null. 모델 없이 점수 사전으로 추론(정적 데모에서도 동작). */
   function inferEmotion(text) {
-    const score = { joy: 0, sad: 0, angry: 0, surprise: 0 };
+    const score = {};
+    for (const emo in EMO_RULES) score[emo] = 0;   // 사전에 감정 추가 시 자동 반영
     for (const emo in EMO_RULES) {
       for (const [re, w] of EMO_RULES[emo]) {
         const m = text.match(re);
@@ -67,6 +76,8 @@ window.AvatarCore = (() => {
     sad:      { rate: -0.12, pitch: -0.12 },
     angry:    { rate: 0.06, pitch: -0.06, volume: 0.15 },
     surprise: { rate: 0.08, pitch: 0.22 },
+    fear:     { rate: 0.10, pitch: 0.10, volume: -0.10 },   // 빠르고 떨리는 작은 소리
+    shy:      { rate: -0.06, pitch: 0.06, volume: -0.15 },  // 작고 조심스럽게
     neutral:  {},
   };
   function voiceProsody(emo, intensity = 1) {
@@ -98,6 +109,9 @@ window.AvatarCore = (() => {
     sad: { mouthfrownleft: 0.5, mouthfrownright: 0.5, browinnerup: 0.7, mouthshrugupper: 0.2 },
     angry: { browdownleft: 0.85, browdownright: 0.85, nosesneerleft: 0.4, nosesneerright: 0.4, mouthpressleft: 0.4, mouthpressright: 0.4, jawforward: 0.25 },
     surprise: { browinnerup: 0.6, browouterupleft: 0.75, browouterupright: 0.75, eyewideleft: 0.8, eyewideright: 0.8, jawopen: 0.3 },
+    fear: { eyewideleft: 0.7, eyewideright: 0.7, browinnerup: 0.85, mouthstretchleft: 0.35, mouthstretchright: 0.35, jawopen: 0.12 },
+    // shy 의 eyelookdown 은 makeGaze 채널 결합을 타고 눈동자도 실제로 내려간다.
+    shy: { mouthsmileleft: 0.3, mouthsmileright: 0.3, eyelookdownleft: 0.55, eyelookdownright: 0.55, mouthpressleft: 0.25, mouthpressright: 0.25 },
   };
 
   // 감정 상태 + 버튼 배선. buttons/activeColor 는 페이지가 주입(2D #5b8cff / 3D #76b900).
@@ -161,8 +175,8 @@ window.AvatarCore = (() => {
   }
 
   // ---------- 시선 결합 (슬라이더 > 엔진 채널 > 커서) + 0.15 평활 ----------
-  // cursor: makeCursorTracker 결과, mulX/mulY: 커서 배율(puppet 0.9/0.6, studio3d 0.8/0.5).
-  // 반환: (sliderVal, W) => [gx, gy]. docs 는 커서 전용이라 이 팩토리 대신 인라인 유지.
+  // cursor: makeCursorTracker 결과, mulX/mulY: 커서 배율(puppet·docs 0.9/0.6, studio3d 0.8/0.5).
+  // 반환: (sliderVal, W) => [gx, gy]. docs 는 슬라이더가 없어 sliderVal=0 고정으로 호출.
   function makeGaze(cursor, { mulX, mulY }) {
     let gx = 0, gy = 0, sacX = 0, sacY = 0, sacNext = 0;
     return (sliderVal, W) => {
@@ -196,6 +210,8 @@ window.AvatarCore = (() => {
     sad:      { speed: 0.55, amp: 0.5,  droop: 9,  beat: 0.4 },  // 고개 숙이고 느리고 작게
     angry:    { speed: 1.5,  amp: 1.25, droop: 0,  beat: 1.6 },  // 빠르고 절도 있게
     surprise: { speed: 1.2,  amp: 1.3,  droop: -4, beat: 1.0 },  // 번쩍 들림
+    fear:     { speed: 1.45, amp: 0.7,  droop: 3,  beat: 0.6 },  // 움츠리고 잔떨림
+    shy:      { speed: 0.8,  amp: 0.6,  droop: 5,  beat: 0.5 },  // 수줍게 숙임
   };
 
   function makeHeadWander() {
@@ -232,8 +248,9 @@ window.AvatarCore = (() => {
       wanderR += (wanderGoalR - wanderR) * 0.02;
       wanderY += (wanderGoalY - wanderY) * 0.02;
       const breath = Math.sin(phB) * 2 * amp;  // ~5s 주기 호흡 — sway 무관(유휴에도 숨 쉼)
-      const rot = Math.sin(phR) * 0.008 * sway * amp + wanderR + nod * 0.015 + beatTilt * beat * beatG;
-      const dy = Math.sin(phY) * 1.5 * sway * amp + wanderY + nod * 3 + breath + beat * 7 * beatG + droop;
+      // wander 도 amp 로 스케일 — 움츠린 감정(sad/fear)은 표류까지 작아져야 일관됨.
+      const rot = Math.sin(phR) * 0.008 * sway * amp + wanderR * amp + nod * 0.015 + beatTilt * beat * beatG;
+      const dy = Math.sin(phY) * 1.5 * sway * amp + wanderY * amp + nod * 3 + breath + beat * 7 * beatG + droop;
       // 머리 흔들림은 두 캔버스(WebGL base + 2D 오버레이)를 함께 감싼 래퍼에 CSS 변환으로 적용.
       // transform-origin=center + translateY(% of height) 조합이 기존 ctx translate/rotate와 수학적으로 동일.
       shakeEl.style.transform = `rotate(${rot.toFixed(5)}rad) translateY(${(dy / 512 * 100).toFixed(4)}%)`;
