@@ -185,9 +185,22 @@ window.AvatarCore = (() => {
   // shakeEl 에 CSS 변환 적용. sway 는 페이지가 넘김(발화 중 1, 아니면 0.5). studio3d 는 3D라 미사용.
   function makeHeadWander() {
     let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
+    let beat = 0, beatTilt = 0, lowSince = 0;  // 강조 제스처: 구절 시작마다 끄덕임 임펄스
     return function tick(shakeEl, now, jawopen, sway) {
       const t = now / 1000;
       nod = 0.85 * nod + 0.15 * jawopen;
+      // 조용(≥250ms)하다 입이 열리는 순간 = 구절 시작 → 끄덕임 비트 + 고개 기울임 변주.
+      // 매 음절마다가 아니라 pause 뒤 온셋에만 걸려 "말의 리듬"이 됨.
+      if (jawopen < 0.1) {
+        if (!lowSince) lowSince = now;
+      } else {
+        if (jawopen > 0.2 && lowSince && now - lowSince > 250) {
+          beat = 1;
+          beatTilt = (Math.random() - 0.5) * 0.02;
+        }
+        lowSince = 0;
+      }
+      beat *= 0.90;  // ~0.5s 감쇠
       if (now > wanderNext) {
         wanderNext = now + 2200 + Math.random() * 2500;
         wanderGoalR = (Math.random() - 0.5) * 0.03;
@@ -196,8 +209,8 @@ window.AvatarCore = (() => {
       wanderR += (wanderGoalR - wanderR) * 0.02;
       wanderY += (wanderGoalY - wanderY) * 0.02;
       const breath = Math.sin(t * 1.2) * 2;  // ~5s 주기 호흡 — sway 무관(유휴에도 숨 쉼)
-      const rot = Math.sin(t * 0.9) * 0.008 * sway + wanderR + nod * 0.015;
-      const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3 + breath;
+      const rot = Math.sin(t * 0.9) * 0.008 * sway + wanderR + nod * 0.015 + beatTilt * beat;
+      const dy = Math.sin(t * 1.7) * 1.5 * sway + wanderY + nod * 3 + breath + beat * 7;
       // 머리 흔들림은 두 캔버스(WebGL base + 2D 오버레이)를 함께 감싼 래퍼에 CSS 변환으로 적용.
       // transform-origin=center + translateY(% of height) 조합이 기존 ctx translate/rotate와 수학적으로 동일.
       shakeEl.style.transform = `rotate(${rot.toFixed(5)}rad) translateY(${(dy / 512 * 100).toFixed(4)}%)`;
