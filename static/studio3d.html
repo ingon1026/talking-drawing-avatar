@@ -38,6 +38,7 @@
   #chatlog .me { color: #b9d68a; }
   #chatlog .bot { color: #e8e8ef; }
   #micBtn.on { background: #e2647e; }
+  #mirrorBtn.on { background: #76b900; }
 </style>
 <script type="importmap">{ "imports": { "three": "/static/vendor/three.module.js" } }</script>
 </head>
@@ -72,6 +73,7 @@
 
   <div class="row">
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
+    <button type="button" class="alt" id="mirrorBtn" title="웹캠 표정을 석고상이 따라합니다">🪞 미러링</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
     <select id="voice">
       <option value="ko-KR-InJoonNeural">인준 (남성)</option>
@@ -186,12 +188,79 @@ const blinker = AvatarCore.makeBlink({
 const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#76b900");
 $("blinkBtn").onclick = () => blinker.trigger();
 
+// ---------- 웹캠 미러링 (MediaPipe 블렌드셰이프 52채널 → mark 모프타깃 직결) ----------
+// 채널 이름이 양쪽 다 ARKit 표준이라 lowercase 만으로 1:1 매핑된다. 시작 시 30프레임
+// 중립 캘리브레이션(정면·무표정) 후 상대값만 전이 — drawface-live 와 같은 정규화.
+const mirror = { on: false, w: null, neutral: null, samples: [] };
+let mirrorVideo = null, mirrorLm = null, mirrorLastT = -1;
+const MIRROR_GAIN = { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 };  // 말하기 수준 벌림 보정
+
+async function mirrorStart() {
+  if (!mirrorLm) {
+    setStatus("미러링 모델 로드 중…");
+    const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17");
+    const vision = await mp.FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm");
+    mirrorLm = await mp.FaceLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
+      runningMode: "VIDEO", numFaces: 1,
+      outputFaceBlendshapes: true,   // 머리 회전은 정신사나워서 미전이 — 표정 채널만
+    });
+  }
+  mirrorVideo = document.createElement("video");
+  mirrorVideo.muted = true;
+  mirrorVideo.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+  await mirrorVideo.play();
+  Object.assign(mirror, { on: true, w: null, neutral: null, samples: [] });
+  $("mirrorBtn").classList.add("on");
+  setStatus("🪞 캘리브레이션 — 정면·무표정으로 잠시 계세요");
+}
+function mirrorStop() {
+  mirror.on = false; mirror.w = null;
+  mirrorVideo?.srcObject?.getTracks().forEach(t => t.stop());
+  mirrorVideo = null;
+  $("mirrorBtn").classList.remove("on");
+  setStatus("");
+}
+$("mirrorBtn").onclick = () =>
+  mirror.on ? mirrorStop() : mirrorStart().catch(e => { mirrorStop(); setStatus("미러링 실패: " + e.message, true); });
+
+function mirrorTick(now) {
+  if (!mirror.on || !mirrorVideo || mirrorVideo.readyState < 2) return;
+  if (mirrorVideo.currentTime === mirrorLastT) return;   // 새 비디오 프레임에서만 추론
+  mirrorLastT = mirrorVideo.currentTime;
+  const res = mirrorLm.detectForVideo(mirrorVideo, now);
+  const cats = res.faceBlendshapes?.[0]?.categories;
+  if (!cats) { mirror.w = null; return; }   // 얼굴 놓침 → 개입 중단(자연 복귀)
+  const raw = {};
+  for (const c of cats) raw[c.categoryName.toLowerCase()] = c.score;
+  if (!mirror.neutral) {   // 30프레임 평균 = 중립
+    mirror.samples.push({ raw });
+    if (mirror.samples.length < 30) return;
+    const n = {};
+    for (const k in raw) n[k] = mirror.samples.reduce((a, s) => a + (s.raw[k] || 0), 0) / mirror.samples.length;
+    mirror.neutral = n;
+    setStatus("🪞 미러링 중 — 석고상이 따라합니다 (버튼으로 종료)");
+    return;
+  }
+  const w = mirror.w || {};
+  for (const k in raw) {
+    if (k === "_neutral") continue;
+    const n = mirror.neutral[k] || 0;
+    const cal = Math.min(1, Math.max(0, (raw[k] - n) / Math.max(0.2, 1 - n)) * (MIRROR_GAIN[k] || 1));
+    w[k] = 0.55 * (w[k] || 0) + 0.45 * cal;   // EMA 평활
+  }
+  mirror.w = w;
+}
+
 // ---------- 렌더 루프 ----------
 function render(now) {
   requestAnimationFrame(render);
   if (!mesh) return;
 
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
+  mirrorTick(now);
+  if (mirror.w) for (const k in mirror.w) smooth[k] = Math.max(smooth[k] || 0, mirror.w[k]);
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
