@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>석고상 미러링 — NVIDIA mark</title>
+<!-- studio3d.html 에서 발화·대화·감정 UI 를 뺀 미러링 전용 페이지. 같은 렌더 코어
+     (avatar_core.js makeMirror)로 mark 헤드 모프타깃을 웹캠 표정으로 구동한다.
+     mark.glb 는 NVIDIA 파생물(gitignore·로컬 전용) — 공개 배포 안 함. -->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    font-family: 'Pretendard', 'Noto Sans KR', sans-serif; background: #16161d; color: #e8e8ef;
+  }
+  main { width: min(560px, 94vw); padding: 24px 0 48px; }
+  h1 { font-size: 1.2rem; font-weight: 600; margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
+  h1 a { color: #9a9ab0; font-size: .85rem; text-decoration: none; }
+  .stage { width: 100%; aspect-ratio: 1; background: #0d0d12; border-radius: 16px; overflow: hidden; border: 1px solid #2a2a35; cursor: grab; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .row { display: flex; gap: 8px; margin-top: 14px; align-items: center; flex-wrap: wrap; }
+  button { padding: 10px 16px; border-radius: 10px; border: 0; background: #76b900; color: #fff; font-size: .95rem; cursor: pointer; }
+  #mirrorBtn.on { background: #76b900; }
+  button.alt { background: #2a2a35; }
+  #status { margin-top: 12px; color: #9a9ab0; font-size: .9rem; min-height: 1.2em; }
+  #status.error { color: #ff7a7a; }
+</style>
+<script type="importmap">{ "imports": { "three": "/static/vendor/three.module.js" } }</script>
+</head>
+<body>
+<main>
+  <h1>🗿 석고상 미러링 <a href="/3d">← NVIDIA 3D 스튜디오</a></h1>
+
+  <div class="stage"><canvas id="cv"></canvas></div>
+
+  <div class="row">
+    <button id="mirrorBtn">🪞 미러링 시작</button>
+    <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
+  </div>
+
+  <div id="status">3D 모델 로딩 중… (41MB, 최초 1회)</div>
+</main>
+
+<script src="/static/avatar_core.js"></script>
+<script type="module">
+let THREE, GLTFLoader;
+try {
+  THREE = await import("three");
+  ({ GLTFLoader } = await import("/static/vendor/GLTFLoader.js"));
+} catch (e) {
+  document.getElementById("status").textContent = "3D 모듈 로드 실패: " + e.message;
+  throw e;
+}
+
+const $ = id => document.getElementById(id);
+const setStatus = AvatarCore.bindStatus($("status"));
+
+// ---------- Three.js 씬 (studio3d 와 동일) ----------
+const canvas = $("cv");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0d12);
+const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 1000);
+scene.add(new THREE.HemisphereLight(0xdfe6ff, 0x2a2018, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1.5, 2, 3); scene.add(key);
+const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -2); scene.add(rim);
+
+const group = new THREE.Group();
+scene.add(group);
+let mesh = null, dict = {}, eyes = [], morphMap = [];
+let smooth = {};
+const W = k => smooth[k] || 0;
+
+function makeEye(cx) {
+  const eg = new THREE.Group();
+  eg.position.set(cx, 159.75, 3.35);
+  const mat = (color, roughness) => new THREE.MeshStandardMaterial({ color, roughness });
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.15, 32, 16), mat(0xf2f0ee, 0.35));
+  const iris = new THREE.Mesh(new THREE.SphereGeometry(0.46, 24, 12), mat(0x44546e, 0.3));
+  iris.position.z = 0.78;
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 8), mat(0x0c0c0c, 0.4));
+  pupil.position.z = 1.0;
+  eg.add(sclera, iris, pupil);
+  group.add(eg);
+  return eg;
+}
+
+new GLTFLoader().load("/static/assets3d/mark.glb", g => {
+  g.scene.traverse(o => { if (o.isMesh) mesh = o; });
+  dict = mesh.morphTargetDictionary || {};
+  morphMap = Object.entries(dict).map(([name, idx]) => [AvatarCore.norm(name), idx]);
+  group.add(g.scene);
+  const box = new THREE.Box3().setFromObject(g.scene);
+  const c = box.getCenter(new THREE.Vector3());
+  group.position.set(-c.x, -c.y, -c.z);
+  eyes = [makeEye(3.41), makeEye(-3.5)];
+  camera.position.set(0, 1.5, 80);
+  camera.lookAt(0, 0, 0);
+  setStatus("🪞 미러링 시작을 누르고 카메라를 허용해주세요");
+}, undefined, e => setStatus("모델 로드 실패: " + e, true));
+
+function resize() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = 1; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(canvas.parentElement);
+
+// 드래그로 헤드 회전
+let dragging = false, px = 0, py = 0, userYaw = 0, userPitch = 0;
+canvas.addEventListener("pointerdown", e => { dragging = true; px = e.clientX; py = e.clientY; });
+addEventListener("pointerup", () => dragging = false);
+addEventListener("pointermove", e => {
+  if (!dragging) return;
+  userYaw += (e.clientX - px) * 0.005; userPitch += (e.clientY - py) * 0.003;
+  userPitch = Math.max(-0.4, Math.min(0.4, userPitch));
+  px = e.clientX; py = e.clientY;
+});
+
+// ---------- 렌더 부품 (studio3d 와 동일 코어) ----------
+const cursor = AvatarCore.makeCursorTracker(canvas);
+const gaze = AvatarCore.makeGaze(cursor, { mulX: 0.8, mulY: 0.5 });
+const blinker = AvatarCore.makeBlink({ autoBlink: () => true, intervalMs: () => 3500, duration: 150, jitter: 0.8 });
+$("blinkBtn").onclick = () => blinker.trigger();
+
+const mirror = AvatarCore.makeMirror({
+  gain: { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 },
+  onStatus: setStatus,
+});
+$("mirrorBtn").onclick = () => {
+  if (mirror.on) {
+    mirror.stop(); $("mirrorBtn").classList.remove("on"); $("mirrorBtn").textContent = "🪞 미러링 시작";
+    return;
+  }
+  mirror.start().then(() => { $("mirrorBtn").classList.add("on"); $("mirrorBtn").textContent = "⏹ 미러링 종료"; })
+    .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
+};
+
+// ---------- 렌더 루프 (studio3d 에서 발화·감정 뺀 것) ----------
+let nod = 0;
+function render(now) {
+  requestAnimationFrame(render);
+  if (!mesh) return;
+
+  smooth = {};
+  mirror.apply(smooth, now);   // 웹캠 표정 채널
+  const blink = Math.max(blinker.value(now), W("eyeblinkleft"), W("eyeblinkright"));
+
+  const inf = mesh.morphTargetInfluences;
+  for (const [k, idx] of morphMap) {
+    inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
+  }
+
+  const [gsx, gsy] = gaze(0, W);   // 미러링 시선 채널 > 커서
+  for (const e of eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
+
+  nod = 0.85 * nod + 0.15 * W("jawopen");
+  group.rotation.set(userPitch + nod * 0.04, userYaw, 0);   // 머리 회전은 미전이(표정만)
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
