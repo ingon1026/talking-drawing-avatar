@@ -71,6 +71,7 @@
     <button type="button" class="alt" id="addChar">➕ 그림 추가</button>
     <button type="button" class="alt" id="delChar" style="display:none">🗑 삭제</button>
     <input type="file" id="charFile" accept="image/*" style="display:none">
+    <button type="button" class="alt" id="recBtn">🎬 움짤 저장</button>
   </div>
 
   <div class="controls">
@@ -159,7 +160,7 @@ speechSynthesis.onvoiceschanged = () => { koVoices = loadVoices(); };
 const VOWEL_SHAPES = {  // 중성 인덱스 → 목표 가중치
   A:  { jawopen: 0.55 },                                  // ㅏㅑ 등
   EO: { jawopen: 0.32 },                                  // ㅓㅕㅡ
-  O:  { jawopen: 0.3, mouthpucker: 0.55 },                // ㅗㅛㅜㅠ
+  O:  { jawopen: 0.3, mouthpucker: 0.8 },                 // ㅗㅛㅜㅠ — 오늘 둥근 O 렌더가 확실히 발동하게 강화
   I:  { jawopen: 0.22, mouthsmileleft: 0.4, mouthsmileright: 0.4 },  // ㅣㅐㅔ...
 };
 // 중성 순서: ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ
@@ -307,8 +308,42 @@ function render(now) {
   } else {
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);
   }
+  // 움짤 녹화 중이면 두 캔버스(WebGL base + 2D 오버레이)를 합성 캔버스에 합침.
+  // 이 시점(warp.render 직후 같은 프레임)이라 WebGL drawingBuffer 가 아직 살아있어 drawImage 가능.
+  if (rec) {
+    capCtx.fillStyle = "#fff"; capCtx.fillRect(0, 0, 512, 512);
+    if (warpOn) capCtx.drawImage(glCanvas, 0, 0);
+    capCtx.drawImage(cv, 0, 0);
+  }
 }
 requestAnimationFrame(render);
+
+// ---------- 움짤 녹화 (두 캔버스 합성 → WebM 다운로드, 서버 불필요) ----------
+const cap = document.createElement("canvas"); cap.width = cap.height = 512;
+const capCtx = cap.getContext("2d");
+let rec = null, chunks = [];
+const REC_MIME = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+  .find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+$("recBtn").onclick = () => {
+  if (!window.MediaRecorder || !REC_MIME) { setStatus("이 브라우저는 녹화를 지원하지 않아요.", true); return; }
+  if (rec) {                                   // 정지 → 다운로드
+    rec.stop(); return;
+  }
+  chunks = [];
+  rec = new MediaRecorder(cap.captureStream(30), { mimeType: REC_MIME });
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => {
+    const url = URL.createObjectURL(new Blob(chunks, { type: "video/webm" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `talking-avatar-${Date.now()}.webm`; a.click();
+    URL.revokeObjectURL(url);
+    rec = null; $("recBtn").textContent = "🎬 움짤 저장"; $("recBtn").style.background = "";
+    setStatus("움짤을 저장했어요! 🎉");
+  };
+  rec.start();
+  $("recBtn").textContent = "⏹ 녹화 중지"; $("recBtn").style.background = "#c0392b";
+  setStatus("● 녹화 중… 문장을 입력하거나 감정 버튼을 눌러보세요");
+};
 
 $("form").onsubmit = e => {
   e.preventDefault();

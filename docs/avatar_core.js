@@ -406,7 +406,8 @@ window.AvatarCore = (() => {
         try {
           const T = await import(threeUrl);
           this.T = T;
-          this.renderer = new T.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: false, premultipliedAlpha: false });
+          // preserveDrawingBuffer: 움짤 녹화가 drawImage 로 gl 캔버스를 캡처할 때 빈 프레임 방지(정석 옵션).
+          this.renderer = new T.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: true });
           // 셰이더 링크 실패는 three가 throw하지 않고 콘솔 로깅만 함 → 이 콜백으로 감지해 폴백 전환.
           this.renderer.debug.onShaderError = () => { this.ready = false; };
           this.renderer.setClearColor(0x000000, 0);
