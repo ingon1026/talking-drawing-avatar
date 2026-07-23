@@ -507,6 +507,38 @@ window.AvatarCore = (() => {
     return speakFlow({ text, voice, engine, audioEl, onAnim, prosody });
   }
 
+  // ---------- 자동 쇼케이스 (첫 방문자 유휴 시 인사·감정 시연) ----------
+  // 오늘 넣은 표현력(감정 7종·몸짓·입 오므림)을 방문자가 아무것도 안 눌러도 보게 하는 유도.
+  const SHOWCASE_SCRIPT = [
+    { text: "안녕하세요! 저는 그림에서 태어난 아바타예요.", emo: "joy" },
+    { text: "이렇게 활짝 웃기도 하고,", emo: "joy" },
+    { text: "시무룩해지기도,", emo: "sad" },
+    { text: "깜짝 놀라기도,", emo: "surprise" },
+    { text: "무서워하기도,", emo: "fear" },
+    { text: "부끄러워하기도 한답니다.", emo: "shy" },
+    { text: "위에 문장을 입력하면 제가 말해드릴게요!", emo: "joy" },
+  ];
+  // playStep(step) → Promise(발화 완료). 발화 방식은 페이지가 주입(docs=speechSynthesis).
+  // 유휴 감지·중단 트리거는 엘리먼트가 페이지마다 달라 페이지가 소유 — 여긴 순차 재생 엔진만.
+  function makeShowcase(playStep, script = SHOWCASE_SCRIPT) {
+    let running = false, cancelled = false;
+    return {
+      get running() { return running; },
+      async play() {
+        if (running) return;
+        running = true; cancelled = false;
+        for (const step of script) {
+          if (cancelled) break;
+          await playStep(step);
+          if (cancelled) break;
+          await new Promise(r => setTimeout(r, 220));   // 스텝 사이 짧은 숨
+        }
+        running = false;
+      },
+      stop() { cancelled = true; },
+    };
+  }
+
   // ---------- 상태줄 setter ----------
   function bindStatus(el) {
     return (msg, isError) => { el.textContent = msg; el.className = isError ? "error" : ""; };
@@ -713,6 +745,6 @@ window.AvatarCore = (() => {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
-    bindStatus, makeAnnotator, makeMic, chat, makeChat,
+    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase,
   };
 })();
