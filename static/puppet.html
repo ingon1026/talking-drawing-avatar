@@ -216,6 +216,15 @@ const annotator = AvatarCore.makeAnnotator({
 // 드래그앤드랍·파일 입력 (어노테이터로 위임)
 stage.addEventListener("dragover", e => e.preventDefault());
 stage.addEventListener("drop", e => { e.preventDefault(); annotator.acceptFile(e.dataTransfer.files[0]); });
+// 캐릭터 클릭 반응: 아바타를 누르면 감정 섞인 한마디
+stage.style.cursor = "pointer";
+stage.addEventListener("click", () => {
+  if (annotator.active()) return;   // 4클릭 어노테이션 중엔 좌표 클릭이라 제외
+  const r = AvatarCore.pickReaction();
+  emo.setEmotion(r.emo, 0.95, false);
+  setStatus("💬 " + r.text);
+  speak(r.text, r.emo);
+});
 $("addChar").onclick = () => $("charFile").click();
 $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.target.value = ""; };
 

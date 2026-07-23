@@ -540,6 +540,23 @@ window.AvatarCore = (() => {
     };
   }
 
+  // ---------- 캐릭터 클릭 반응 (아바타를 누르면 감정 섞인 한마디) ----------
+  const REACTIONS = [
+    { text: "우와, 깜짝이야!", emo: "surprise" },
+    { text: "헤헤, 간지러워요.", emo: "joy" },
+    { text: "아이, 부끄럽게 왜 그래요.", emo: "shy" },
+    { text: "안녕하세요! 반가워요.", emo: "joy" },
+    { text: "어? 왜 그러세요?", emo: "surprise" },
+    { text: "으, 살살 해주세요.", emo: "fear" },
+  ];
+  let _lastReact = -1;
+  function pickReaction() {   // 직전과 다른 반응을 뽑아 연속 중복 방지
+    let i;
+    do { i = Math.floor(Math.random() * REACTIONS.length); } while (i === _lastReact && REACTIONS.length > 1);
+    _lastReact = i;
+    return REACTIONS[i];
+  }
+
   // ---------- 상태줄 setter ----------
   function bindStatus(el) {
     return (msg, isError) => { el.textContent = msg; el.className = isError ? "error" : ""; };
@@ -746,6 +763,6 @@ window.AvatarCore = (() => {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
-    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase,
+    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction,
   };
 })();

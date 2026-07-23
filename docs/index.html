@@ -393,6 +393,17 @@ function onUserActive() {         // 상호작용하면 쇼케이스 즉시 중�
 ["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, onUserActive));
 scheduleShowcase();
 
+// ---------- 캐릭터 클릭 반응: 아바타를 누르면 감정 섞인 한마디 (클릭=제스처라 소리 남) ----------
+stage.style.cursor = "pointer";
+stage.addEventListener("click", () => {
+  if (annotator.active()) return;   // 4클릭 어노테이션 중엔 좌표 클릭이라 제외
+  showcase.stop();
+  const r = AvatarCore.pickReaction();
+  emo.setEmotion(r.emo, 0.95, false);
+  setStatus("💬 " + r.text);
+  speak(r.text, AvatarCore.voiceProsody(r.emo, 0.95));
+});
+
 // ---------- 드래그앤드랍 캐릭터 생성 (클라이언트 빌더) ----------
 function ringMedian(c2d, box) {  // box 주변 4px 링의 중앙값 색
   const [x0, y0, x1, y1] = box.map(Math.round), R = 4, vals = [[], [], []];
