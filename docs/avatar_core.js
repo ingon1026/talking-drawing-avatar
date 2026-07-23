@@ -557,6 +557,78 @@ window.AvatarCore = (() => {
     return REACTIONS[i];
   }
 
+  // ---------- 웹캠 표정 미러링 (MediaPipe FaceLandmarker 블렌드셰이프 52채널) ----------
+  // 브라우저 전용(서버·GPU 추론 불필요, github.io OK). 채널 이름이 ARKit 표준이라 lowercase 로
+  // 렌더러 W() 채널과 1:1. 시작 시 30프레임 중립 캘리브레이션 후 상대값만 전이(drawface 정규화).
+  // 사용: const mirror = makeMirror({ gain, onStatus }); 렌더 루프에서 mirror.tick(now) 후
+  // mirror.w 를 smooth 에 max-결합. 머리 회전은 산만해서 전이하지 않는다(표정 채널만).
+  function makeMirror({ gain = {}, onStatus } = {}) {
+    const st = { on: false, w: null, neutral: null, samples: [] };
+    let lm = null, video = null, lastT = -1;
+    const say = (msg, err) => onStatus && onStatus(msg, err);
+
+    async function start() {
+      if (!lm) {
+        say("미러링 모델 로드 중…");
+        const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17");
+        const vision = await mp.FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm");
+        lm = await mp.FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
+          runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
+        });
+      }
+      video = document.createElement("video");
+      video.muted = true;
+      video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+      await video.play();
+      Object.assign(st, { on: true, w: null, neutral: null, samples: [] });
+      say("🪞 캘리브레이션 — 정면·무표정으로 잠시 계세요");
+    }
+    function stop() {
+      st.on = false; st.w = null;
+      video?.srcObject?.getTracks().forEach(t => t.stop());
+      video = null;
+      say("");
+    }
+    function tick(now) {
+      if (!st.on || !video || video.readyState < 2) return;
+      if (video.currentTime === lastT) return;   // 새 비디오 프레임에서만 추론
+      lastT = video.currentTime;
+      const cats = lm.detectForVideo(video, now).faceBlendshapes?.[0]?.categories;
+      if (!cats) { st.w = null; return; }        // 얼굴 놓침 → 개입 중단(자연 복귀)
+      const raw = {};
+      for (const c of cats) raw[c.categoryName.toLowerCase()] = c.score;
+      if (!st.neutral) {                          // 30프레임 평균 = 중립
+        st.samples.push(raw);
+        if (st.samples.length < 30) return;
+        const n = {};
+        for (const k in raw) n[k] = st.samples.reduce((a, s) => a + (s[k] || 0), 0) / st.samples.length;
+        st.neutral = n;
+        say("🪞 미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
+        return;
+      }
+      const w = st.w || {};
+      for (const k in raw) {
+        if (k === "_neutral") continue;
+        const n = st.neutral[k] || 0;
+        const cal = Math.min(1, Math.max(0, (raw[k] - n) / Math.max(0.2, 1 - n)) * (gain[k] || 1));
+        w[k] = 0.55 * (w[k] || 0) + 0.45 * cal;   // EMA 평활
+      }
+      st.w = w;
+    }
+    return {
+      get on() { return st.on; },
+      get w() { return st.w; },
+      start, stop, tick,
+      // 렌더 루프 한 줄 헬퍼: tick + smooth 에 max-결합
+      apply(smooth, now) {
+        tick(now);
+        if (st.w) for (const k in st.w) smooth[k] = Math.max(smooth[k] || 0, st.w[k]);
+      },
+    };
+  }
+
   // ---------- 상태줄 setter ----------
   function bindStatus(el) {
     return (msg, isError) => { el.textContent = msg; el.className = isError ? "error" : ""; };
@@ -763,6 +835,6 @@ window.AvatarCore = (() => {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
-    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction,
+    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror,
   };
 })();

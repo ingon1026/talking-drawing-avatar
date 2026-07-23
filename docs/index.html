@@ -37,6 +37,7 @@
   button { padding: 10px 16px; border-radius: 10px; border: 0; background: #5b8cff; color: #fff; font-size: .95rem; cursor: pointer; }
   button:disabled { background: #333; cursor: default; }
   button.alt { background: #2a2a35; }
+  #mirrorBtn.on { background: #5b8cff; }
   .row { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
   .controls { margin-top: 16px; display: grid; gap: 10px; font-size: .88rem; }
   .controls label { display: flex; align-items: center; gap: 10px; }
@@ -79,6 +80,7 @@
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
     <label><input type="checkbox" id="warpToggle" checked> 얼굴 워핑</label>
+    <button type="button" class="alt" id="mirrorBtn" title="웹캠 표정을 캐릭터가 따라합니다">🪞 미러링</button>
     <select id="voice"></select>
     <select id="character"></select>
     <button type="button" class="alt" id="addChar">➕ 그림 추가</button>
@@ -267,6 +269,17 @@ stage.addEventListener("drop", e => { e.preventDefault(); annotator.acceptFile(e
 $("addChar").onclick = () => $("charFile").click();
 $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.target.value = ""; };
 
+// ---------- 웹캠 미러링 (코어 makeMirror — MediaPipe 블렌드셰이프 → 스프라이트 채널) ----------
+const mirror = AvatarCore.makeMirror({
+  gain: { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 },  // 말하기 수준 벌림 보정
+  onStatus: setStatus,
+});
+$("mirrorBtn").onclick = () => {
+  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); return; }
+  mirror.start().then(() => $("mirrorBtn").classList.add("on"))
+    .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
+};
+
 // 깜빡임 UI 배선
 $("blinkBtn").onclick = () => blinker.trigger();
 $("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
@@ -283,12 +296,13 @@ function render(now) {
   if (!parts.base) return;
 
   AvatarCore.smoothStep(smooth, currentWeights());
+  mirror.apply(smooth, now);   // 미러링 중이면 웹캠 표정 채널을 max-결합
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value;
   smooth.mouthsmileleft = Math.max(smooth.mouthsmileleft || 0, smileOv);
   smooth.mouthsmileright = Math.max(smooth.mouthsmileright || 0, smileOv);
   emo.applyMax(smooth, !!talk);   // 발화 중이면 감정 유지, 유휴면 자동 감정 감쇠
-  const blink = Math.max(blinker.value(now), +$("ovBlink").value);
+  const blink = Math.max(blinker.value(now), +$("ovBlink").value, W("eyeblinkleft"), W("eyeblinkright"));
 
   // 머리: 발화 에너지 끄덕임 + 느린 표류 + 잔잔한 사인
   const sway = talk ? 1 : 0.5;
@@ -384,7 +398,7 @@ const showcase = AvatarCore.makeShowcase(step => new Promise(resolve => {
 let idleTimer = null;
 function scheduleShowcase() {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { if (!showcase.running) showcase.play().then(() => setStatus("")); }, 7000);
+  idleTimer = setTimeout(() => { if (!showcase.running && !mirror.on) showcase.play().then(() => setStatus("")); }, 7000);   // 미러링 중엔 쇼케이스 없음
 }
 function onUserActive() {         // 상호작용하면 쇼케이스 즉시 중단 + 유휴 타이머 리셋
   if (showcase.running) { showcase.stop(); speechSynthesis.cancel(); setStatus(""); }

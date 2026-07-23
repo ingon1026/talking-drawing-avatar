@@ -50,6 +50,7 @@
   #chatlog .me { color: #b9c6e8; }
   #chatlog .bot { color: #e8e8ef; }
   #micBtn.on { background: #e2647e; }
+  #mirrorBtn.on { background: #5b8cff; }
 </style>
 </head>
 <body>
@@ -85,6 +86,7 @@
 
   <div class="row">
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
+    <button type="button" class="alt" id="mirrorBtn" title="웹캠 표정을 캐릭터가 따라합니다">🪞 미러링</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
     <label><input type="checkbox" id="warpToggle" checked> 얼굴 워핑</label>
     <select id="voice">
@@ -232,6 +234,17 @@ $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.targe
 $("blinkBtn").onclick = () => blinker.trigger();
 $("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
 
+// ---------- 웹캠 미러링 (코어 makeMirror — MediaPipe 블렌드셰이프 → 파츠 채널) ----------
+const mirror = AvatarCore.makeMirror({
+  gain: { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 },  // 말하기 수준 벌림 보정
+  onStatus: setStatus,
+});
+$("mirrorBtn").onclick = () => {
+  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); return; }
+  mirror.start().then(() => $("mirrorBtn").classList.add("on"))
+    .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
+};
+
 // ---------- 렌더 루프 ----------
 function render(now) {
   requestAnimationFrame(render);
@@ -245,6 +258,7 @@ function render(now) {
 
   // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
+  mirror.apply(smooth, now);
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
   const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };
