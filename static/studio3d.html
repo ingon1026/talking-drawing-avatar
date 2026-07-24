@@ -75,6 +75,9 @@
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
     <button type="button" class="alt" id="mirrorBtn" title="웹캠 표정을 석고상이 따라합니다">🪞 미러링</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;color:#9a9ab0;cursor:pointer">
+      <input type="checkbox" id="headMove"> 머리 움직임
+    </label>
     <select id="voice">
       <option value="ko-KR-InJoonNeural">인준 (남성)</option>
       <option value="ko-KR-HyunsuMultilingualNeural">현수 (남성)</option>
@@ -202,6 +205,10 @@ $("mirrorBtn").onclick = () => {
 };
 
 // ---------- 렌더 루프 ----------
+// 머리 회전 부호 — 실사용에서 뒤집혀 보이면 여기만 바꾼다 (?hs=y,p,r 로 즉석 실험 가능)
+const hsQ = new URLSearchParams(location.search).get("hs");
+const hsv = hsQ ? hsQ.split(",").map(Number) : [1, 1, 1];
+const SIGN = { y: hsv[0] || 1, p: hsv[1] || 1, r: hsv[2] || 1 };
 function render(now) {
   requestAnimationFrame(render);
   if (!mesh) return;
@@ -232,7 +239,10 @@ function render(now) {
     const hf = anim.head[Math.min(Math.floor(audio.currentTime * anim.fps), anim.head.length - 1)];
     hYaw = hf[0] * Math.PI / 180; hPitch = hf[1] * Math.PI / 180; hRoll = hf[2] * Math.PI / 180;
   }
-  group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);
+  // 토글 ON 이면 웹캠 머리 자세를 위에 얹는다 (OFF 면 기존 동작 그대로)
+  const h = $("headMove").checked ? mirror.head() : null;
+  if (h) group.rotation.set(userPitch + nod * 0.04 + hPitch + SIGN.p * h[1], userYaw + hYaw + SIGN.y * h[0], hRoll + SIGN.r * h[2]);
+  else group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);
 
   renderer.render(scene, camera);
 }

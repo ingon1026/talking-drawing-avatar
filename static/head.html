@@ -37,19 +37,30 @@
   <div class="row">
     <button id="mirrorBtn">🪞 미러링 시작</button>
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
+    <select id="headSel" style="padding:10px;border-radius:10px;background:#0d0d12;color:inherit;border:1px solid #2a2a35">
+      <option value="mark">🗿 석고상 남 (mark)</option>
+      <option value="claire">🗿 석고상 여 (claire)</option>
+      <option value="rpm">🧑 Ready Player Me (로컬 테스트)</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;color:#9a9ab0;cursor:pointer">
+      <input type="checkbox" id="headMove"> 머리 움직임
+    </label>
   </div>
 
-  <div id="status">3D 모델 로딩 중… (41MB, 최초 1회)</div>
+  <div id="status">3D 모델 로딩 중…</div>
+  <div id="headDbg" style="margin-top:6px;color:#76b900;font:13px monospace;min-height:1.2em"></div>
 
   <div id="panel" style="display:none;margin-top:14px"></div>
 </main>
 
 <script src="/static/avatar_core.js"></script>
 <script type="module">
-let THREE, GLTFLoader;
+let THREE, GLTFLoader, MeshoptDecoder;
 try {
   THREE = await import("three");
   ({ GLTFLoader } = await import("/static/vendor/GLTFLoader.js"));
+  // claire.glb 는 meshopt 압축본 — 디코더 필요 (mark 는 무압축이라 없어도 로드됨)
+  ({ MeshoptDecoder } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/meshopt_decoder.module.js"));
 } catch (e) {
   document.getElementById("status").textContent = "3D 모듈 로드 실패: " + e.message;
   throw e;
@@ -75,32 +86,66 @@ let mesh = null, eyes = [], morphMap = [];
 let smooth = {};
 const W = k => smooth[k] || 0;
 
-function makeEye(cx) {
+// 눈알 구체 — 안구 메시가 없는 석고 헤드(mark·claire)용. bbox 분율로 헤드 크기에 맞춤.
+function makeEye(sign, box) {
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const k = s.y / 41.5;
   const eg = new THREE.Group();
-  eg.position.set(cx, 159.75, 3.35);
+  eg.position.set(c.x + sign * 0.111 * s.x, c.y + 0.151 * s.y, c.z + 0.284 * s.z);
   const mat = (color, roughness) => new THREE.MeshStandardMaterial({ color, roughness });
-  const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.15, 32, 16), mat(0xf2f0ee, 0.35));
-  const iris = new THREE.Mesh(new THREE.SphereGeometry(0.46, 24, 12), mat(0x44546e, 0.3));
-  iris.position.z = 0.78;
-  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 8), mat(0x0c0c0c, 0.4));
-  pupil.position.z = 1.0;
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.15 * k, 32, 16), mat(0xf2f0ee, 0.35));
+  const iris = new THREE.Mesh(new THREE.SphereGeometry(0.46 * k, 24, 12), mat(0x44546e, 0.3));
+  iris.position.z = 0.78 * k;
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.2 * k, 16, 8), mat(0x0c0c0c, 0.4));
+  pupil.position.z = 1.0 * k;
   eg.add(sclera, iris, pupil);
   group.add(eg);
   return eg;
 }
 
-new GLTFLoader().load("/static/assets3d/mark.glb", g => {
-  g.scene.traverse(o => { if (o.isMesh) mesh = o; });
-  morphMap = Object.entries(mesh.morphTargetDictionary || {}).map(([name, idx]) => [AvatarCore.norm(name), idx]);
-  group.add(g.scene);
-  const box = new THREE.Box3().setFromObject(g.scene);
-  const c = box.getCenter(new THREE.Vector3());
-  group.position.set(-c.x, -c.y, -c.z);
-  eyes = [makeEye(3.41), makeEye(-3.5)];
-  camera.position.set(0, 1.5, 80);
-  camera.lookAt(0, 0, 0);
-  setStatus("🪞 미러링 시작을 누르고 카메라를 허용해주세요");
-}, undefined, e => setStatus("모델 로드 실패: " + e, true));
+// 헤드별 특성: 석고(mark·claire)는 머리만 있고 안구 메시가 없어 구체를 넣는다.
+// RPM 아바타는 반신(머리~가슴)이고 눈·머리카락·옷이 이미 있으며 eyeLook 모프로 눈이 돌아간다.
+const HEADS = {
+  mark:   { url: "/static/assets3d/mark.glb",   eyeSpheres: true,  headFrac: 1.0  },
+  claire: { url: "/static/assets3d/claire.glb", eyeSpheres: true,  headFrac: 1.0  },
+  rpm:    { url: "/static/assets3d/rpm.glb",    eyeSpheres: false, headFrac: 0.22 },
+};
+const cache = {};
+let sceneNode = null;
+function loadHead(name) {
+  const cfg = HEADS[name];
+  const done = g => {
+    if (sceneNode) group.remove(sceneNode);
+    eyes.forEach(e => group.remove(e)); eyes = [];
+    group.position.set(0, 0, 0);
+    group.updateMatrixWorld(true);          // .position 을 matrixWorld 에 반영 후 bbox 계산
+    sceneNode = g.scene;
+    mesh = null;
+    sceneNode.traverse(o => { if (o.isMesh && o.morphTargetInfluences) { mesh = o; o.frustumCulled = false; } });
+    if (!mesh) { setStatus(name + ": 모프타깃 메시를 못 찾음", true); return; }
+    morphMap = Object.entries(mesh.morphTargetDictionary || {}).map(([n, i]) => [AvatarCore.norm(n), i]);
+    group.add(sceneNode);
+    const box = new THREE.Box3().setFromObject(sceneNode);
+    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+    if (cfg.eyeSpheres) eyes = [makeEye(1, box), makeEye(-1, box)];
+    // 프레이밍: 석고는 전체가 머리 / RPM 은 반신이라 상단 headFrac 만큼을 머리로 보고 맞춘다
+    const headH = s.y * cfg.headFrac;
+    const focusY = cfg.headFrac === 1 ? c.y : box.max.y - headH * 0.42;
+    group.position.set(-c.x, -focusY, -c.z);
+    camera.position.set(0, 0, headH * 2.0);
+    camera.lookAt(0, 0, 0);
+    camera.near = headH / 100; camera.far = headH * 100; camera.updateProjectionMatrix();
+    setStatus(`🪞 미러링 시작을 누르고 카메라를 허용해주세요 — 모프 ${morphMap.length}개`);
+  };
+  setStatus(name + " 로딩 중…");
+  if (cache[name]) return done(cache[name]);
+  const loader = new GLTFLoader();
+  if (MeshoptDecoder) loader.setMeshoptDecoder(MeshoptDecoder);
+  loader.load(cfg.url, g => { cache[name] = g; done(g); },
+    undefined, e => setStatus(name + " 로드 실패: " + e, true));
+}
+$("headSel").onchange = () => loadHead($("headSel").value);
+loadHead("mark");
 
 function resize() {
   const r = canvas.parentElement.getBoundingClientRect();
@@ -141,7 +186,11 @@ $("mirrorBtn").onclick = () => {
 };
 
 // ---------- 렌더 루프 (studio3d 에서 발화·감정 뺀 것) ----------
-let nod = 0;
+// 머리 회전 부호 — 실사용에서 뒤집혀 보이면 여기만 바꾼다 (?hs=y,p,r 로 즉석 실험 가능)
+const hsQ = new URLSearchParams(location.search).get("hs");
+const hsv = hsQ ? hsQ.split(",").map(Number) : [1, 1, 1];
+const SIGN = { y: hsv[0] || 1, p: hsv[1] || 1, r: hsv[2] || 1 };
+let nod = 0, dbgAt = 0;
 function render(now) {
   requestAnimationFrame(render);
   if (!mesh) return;
@@ -159,8 +208,18 @@ function render(now) {
   const [gsx, gsy] = gaze(0, W);   // 미러링 시선 채널 > 커서
   for (const e of eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
 
+  // 머리 회전: 토글 ON 이면 웹캠 머리 자세를 전이, OFF 면 표정만 (기존 동작)
   nod = 0.85 * nod + 0.15 * W("jawopen");
-  group.rotation.set(userPitch + nod * 0.04, userYaw, 0);   // 머리 회전은 미전이(표정만)
+  const on = $("headMove").checked;
+  const h = on ? mirror.head() : null;
+  if (h) group.rotation.set(userPitch + SIGN.p * h[1] + nod * 0.04, userYaw + SIGN.y * h[0], SIGN.r * h[2]);
+  else group.rotation.set(userPitch + nod * 0.04, userYaw, 0);
+  if (on && now - dbgAt > 150) {   // 값이 오는지·부호가 맞는지 눈으로 확인
+    dbgAt = now;
+    $("headDbg").textContent = h
+      ? `머리 yaw ${h[0] >= 0 ? "+" : ""}${h[0].toFixed(2)}  pitch ${h[1] >= 0 ? "+" : ""}${h[1].toFixed(2)}  roll ${h[2] >= 0 ? "+" : ""}${h[2].toFixed(2)}`
+      : (mirror.on ? "머리 값 없음 — 얼굴 미검출 또는 캘리브레이션 중" : "미러링을 시작하세요");
+  } else if (!on) $("headDbg").textContent = "";
   renderer.render(scene, camera);
 }
 requestAnimationFrame(render);
