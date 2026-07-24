@@ -621,7 +621,8 @@ window.AvatarCore = (() => {
       lastT = video.currentTime;
       const res = lm.detectForVideo(video, now);
       const cats = res.faceBlendshapes?.[0]?.categories;
-      if (!cats) { st.w = null; return; }        // 얼굴 놓침 → 개입 중단(자연 복귀)
+      if (!cats) { st.w = null; st.lm = null; return; }   // 얼굴 놓침 → 개입 중단(자연 복귀)
+      st.lm = res.faceLandmarks?.[0] || null;    // 분석 패널(비교군 시각화)용 원본 랜드마크
       const raw = {};
       for (const c of cats) raw[c.categoryName.toLowerCase()] = c.score;
       const g = irisGaze(res.faceLandmarks?.[0]);   // 아이리스 정밀 시선 (감김이면 null)
@@ -673,6 +674,8 @@ window.AvatarCore = (() => {
         tick(now);
         if (st.w) for (const k in st.w) smooth[k] = Math.max(smooth[k] || 0, st.w[k]);
       },
+      // 분석 패널용: 원본 비디오 + 478점 랜드마크 + 캘리브레이션된 채널값(캐릭터 구동값과 동일)
+      debug: () => ({ video, lm: st.lm, w: st.w }),
     };
   }
 
