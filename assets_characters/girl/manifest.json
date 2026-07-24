@@ -1,0 +1,19 @@
+{
+  "name": "소녀",
+  "persona": "너는 사용자가 그린 그림에서 태어난 밝고 다정한 아바타야. 호기심 많고 친구처럼 편하게 대화한다.",
+  "pupilRange": 8,
+  "browRange": 12,
+  "jawDrop": 9,
+  "mouthCenter": [
+    256,
+    336
+  ],
+  "proceduralMouth": true,
+  "mouthStyle": {
+    "line": "#5a3a2e",
+    "fill": "#b5504a",
+    "tongue": "#e79aa0",
+    "teeth": "#ffffff",
+    "width": 30
+  }
+}
