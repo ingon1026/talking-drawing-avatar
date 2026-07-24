@@ -40,6 +40,8 @@
   </div>
 
   <div id="status">3D 모델 로딩 중… (41MB, 최초 1회)</div>
+
+  <div id="panel" style="display:none;margin-top:14px"></div>
 </main>
 
 <script src="/static/avatar_core.js"></script>
@@ -127,12 +129,14 @@ $("blinkBtn").onclick = () => blinker.trigger();
 const mirror = AvatarCore.makeMirror({
   onStatus: setStatus,
 });
+const mpanel = AvatarCore.makeMirrorPanel(mirror, $("panel"));   // 비교군 분석 패널 (코어 공용)
 $("mirrorBtn").onclick = () => {
   if (mirror.on) {
     mirror.stop(); $("mirrorBtn").textContent = "🪞 미러링 시작";
+    $("panel").style.display = "none";
     return;
   }
-  mirror.start().then(() => { $("mirrorBtn").textContent = "⏹ 미러링 종료"; })
+  mirror.start().then(() => { $("mirrorBtn").textContent = "⏹ 미러링 종료"; $("panel").style.display = ""; })
     .catch(e => { mirror.stop(); $("mirrorBtn").textContent = "🪞 미러링 시작"; setStatus("미러링 실패: " + e.message, true); });
 };
 
@@ -144,6 +148,7 @@ function render(now) {
 
   smooth = {};
   mirror.apply(smooth, now);   // 웹캠 표정 채널
+  mpanel.draw(W);   // 비교군 패널
   const blink = Math.max(blinker.value(now), W("eyeblinkleft"), W("eyeblinkright"));
 
   const inf = mesh.morphTargetInfluences;

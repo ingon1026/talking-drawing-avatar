@@ -558,6 +558,66 @@ window.AvatarCore = (() => {
     return REACTIONS[i];
   }
 
+  // ---------- 분석 패널 (비교군): 내 얼굴 + 478점 랜드마크 + 구동 채널값 ----------
+  // 어느 페이지든 컨테이너 하나 주면 동일 패널 — 스타일 인라인이라 페이지 CSS 의존 없음.
+  // 반환된 draw(W) 를 렌더 루프에서 매 프레임 호출 (W = 채널 접근자). 컨테이너 숨김이면 즉시 반환.
+  const PANEL_CHS = [
+    ["입 벌림 jawOpen", W => W("jawopen")],
+    ["미소 mouthSmile", W => (W("mouthsmileleft") + W("mouthsmileright")) / 2],
+    ["오므림 mouthPucker", W => W("mouthpucker")],
+    ["눈 감음 eyeBlink", W => (W("eyeblinkleft") + W("eyeblinkright")) / 2],
+    ["눈썹 browInnerUp", W => W("browinnerup")],
+    // 시선 2개는 makeGaze 와 동일 결합식 — 홍채 트래킹 결과가 그대로 보인다 (양방향 막대)
+    ["시선 가로 eyeLookX", W => (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2, true],
+    ["시선 세로 eyeLookY", W => (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2, true],
+  ];
+  function makeMirrorPanel(mirror, mount) {
+    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">📊 비교군 — 내 얼굴 → MediaPipe 채널</div>';
+    const cv = document.createElement("canvas");
+    cv.width = 320; cv.height = 240;
+    cv.style.cssText = "width:100%;border-radius:12px;border:1px solid #2a2a35;background:#0d0d12;display:block";
+    mount.appendChild(cv);
+    const ctx = cv.getContext("2d");
+    const bars = PANEL_CHS.map(([label, , bipolar]) => {
+      const row = document.createElement("div");
+      row.style.cssText = "margin-top:7px;font-size:.76rem;color:#9a9ab0";
+      row.innerHTML = `<span>${label}</span><span style="float:right;color:#e8e8ef;font-variant-numeric:tabular-nums"></span>`
+        + '<div style="height:8px;background:#23232e;border-radius:4px;position:relative;margin-top:3px"><div style="position:absolute;top:0;bottom:0;background:#5b8cff;border-radius:4px"></div></div>';
+      mount.appendChild(row);
+      return { val: row.children[1], fill: row.querySelector("div>div"), bipolar };
+    });
+    return {
+      draw(W) {
+        if (!mount.offsetParent) return;   // 숨김 상태 — 일 안 함
+        const d = mirror.debug();
+        const w = cv.width, h = cv.height;
+        ctx.fillStyle = "#0d0d12"; ctx.fillRect(0, 0, w, h);
+        if (!mirror.on || !d.video || d.video.readyState < 2) {
+          ctx.fillStyle = "#9a9ab0"; ctx.font = "13px sans-serif"; ctx.textAlign = "center";
+          ctx.fillText("미러링을 시작하면 표시됩니다", w / 2, h / 2);
+        } else {
+          ctx.save(); ctx.scale(-1, 1); ctx.drawImage(d.video, -w, 0, w, h); ctx.restore();   // 거울 반전
+          if (d.lm) {
+            ctx.fillStyle = "rgba(91,140,255,.85)";
+            for (let i = 0; i < 468; i++) ctx.fillRect((1 - d.lm[i].x) * w - .5, d.lm[i].y * h - .5, 1.5, 1.5);
+            ctx.fillStyle = "#ffb03a";   // 홍채 10점 = 시선 계산 입력
+            for (let i = 468; i < d.lm.length; i++) ctx.fillRect((1 - d.lm[i].x) * w - 1.5, d.lm[i].y * h - 1.5, 3, 3);
+          }
+        }
+        PANEL_CHS.forEach(([, get, bipolar], i) => {
+          const v = get(W), b = bars[i];
+          b.val.textContent = v.toFixed(2);
+          if (bipolar) {
+            const p = Math.max(-1, Math.min(1, v)) * 50;
+            b.fill.style.left = p < 0 ? 50 + p + "%" : "50%";
+            b.fill.style.width = Math.abs(p) + "%";
+            b.fill.style.background = "#ffb03a";
+          } else { b.fill.style.left = "0"; b.fill.style.width = Math.min(1, v) * 100 + "%"; }
+        });
+      },
+    };
+  }
+
   // ---------- 아이리스 시선 (478점 랜드마크의 홍채 10점 → [-1..1] 근사) ----------
   // 홍채 중심이 눈꼬리(가로)·눈꺼풀(세로) 기준 어디 있는지의 비율 — 머리 회전에 1차 자체 보정.
   // 눈을 거의 감으면(개방도 < 0.28) null — 호출측이 직전 시선을 유지하게 한다(깜빡임 간섭 차단).
@@ -887,6 +947,6 @@ window.AvatarCore = (() => {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
-    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze,
+    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
   };
 })();

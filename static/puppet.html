@@ -116,6 +116,8 @@
   <div id="chatlog" style="display:none"></div>
   <div id="status"></div>
   <audio id="audio"></audio>
+
+  <div id="panel" style="display:none;margin-top:14px"></div>
 </main>
 
 <script src="/static/avatar_core.js"></script>
@@ -238,9 +240,10 @@ $("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.v
 const mirror = AvatarCore.makeMirror({
   onStatus: setStatus,
 });
+const mpanel = AvatarCore.makeMirrorPanel(mirror, $("panel"));   // 비교군 분석 패널 (코어 공용)
 $("mirrorBtn").onclick = () => {
-  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); return; }
-  mirror.start().then(() => $("mirrorBtn").classList.add("on"))
+  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); $("panel").style.display = "none"; return; }
+  mirror.start().then(() => { $("mirrorBtn").classList.add("on"); $("panel").style.display = ""; })
     .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
 };
 
@@ -258,6 +261,7 @@ function render(now) {
   // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
   mirror.apply(smooth, now);
+  mpanel.draw(W);   // 비교군 패널
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
   const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };

@@ -104,6 +104,8 @@
     <a href="https://github.com/ingon1026/talking-drawing-avatar">GitHub 저장소</a>.
     그림을 화면에 끌어다 놓으면 내 캐릭터를 만들 수 있어요 (왼눈→오른눈→입 중심 클릭 → 입 드래그).
   </footer>
+
+  <div id="panel" style="display:none;margin-top:14px"></div>
 </main>
 
 <script src="avatar_core.js"></script>
@@ -273,9 +275,10 @@ $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.targe
 const mirror = AvatarCore.makeMirror({
   onStatus: setStatus,
 });
+const mpanel = AvatarCore.makeMirrorPanel(mirror, $("panel"));   // 비교군 분석 패널 (코어 공용)
 $("mirrorBtn").onclick = () => {
-  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); return; }
-  mirror.start().then(() => $("mirrorBtn").classList.add("on"))
+  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); $("panel").style.display = "none"; return; }
+  mirror.start().then(() => { $("mirrorBtn").classList.add("on"); $("panel").style.display = ""; })
     .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
 };
 
@@ -296,6 +299,7 @@ function render(now) {
 
   AvatarCore.smoothStep(smooth, currentWeights());
   mirror.apply(smooth, now);   // 미러링 중이면 웹캠 표정 채널을 max-결합
+  mpanel.draw(W);   // 비교군 패널
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value;
   smooth.mouthsmileleft = Math.max(smooth.mouthsmileleft || 0, smileOv);
