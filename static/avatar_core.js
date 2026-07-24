@@ -587,6 +587,7 @@ window.AvatarCore = (() => {
       return { val: row.children[1], fill: row.querySelector("div>div"), bipolar };
     });
     return {
+      canvas: cv,   // 동시 구동 화면의 녹화 합성용
       draw(W) {
         if (!mount.offsetParent) return;   // 숨김 상태 — 일 안 함
         const d = mirror.debug();
