@@ -6,7 +6,8 @@
 <title>석고상 미러링 — NVIDIA mark</title>
 <!-- studio3d.html 에서 발화·대화·감정 UI 를 뺀 미러링 전용 페이지. 같은 렌더 코어
      (avatar_core.js makeMirror)로 mark 헤드 모프타깃을 웹캠 표정으로 구동한다.
-     mark.glb 는 NVIDIA 파생물(gitignore·로컬 전용) — 공개 배포 안 함. -->
+     mark.glb 는 Maya-ACE(MIT) 파생 — 라이선스 확인 후 drawface-live 에서 공개 배포 중.
+     여기 gitignore 는 용량(41MB)·재생성 가능 산출물이라는 이유로 유지. -->
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -21,7 +22,6 @@
   canvas { width: 100%; height: 100%; display: block; }
   .row { display: flex; gap: 8px; margin-top: 14px; align-items: center; flex-wrap: wrap; }
   button { padding: 10px 16px; border-radius: 10px; border: 0; background: #76b900; color: #fff; font-size: .95rem; cursor: pointer; }
-  #mirrorBtn.on { background: #76b900; }
   button.alt { background: #2a2a35; }
   #status { margin-top: 12px; color: #9a9ab0; font-size: .9rem; min-height: 1.2em; }
   #status.error { color: #ff7a7a; }
@@ -69,7 +69,7 @@ const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -
 
 const group = new THREE.Group();
 scene.add(group);
-let mesh = null, dict = {}, eyes = [], morphMap = [];
+let mesh = null, eyes = [], morphMap = [];
 let smooth = {};
 const W = k => smooth[k] || 0;
 
@@ -89,8 +89,7 @@ function makeEye(cx) {
 
 new GLTFLoader().load("/static/assets3d/mark.glb", g => {
   g.scene.traverse(o => { if (o.isMesh) mesh = o; });
-  dict = mesh.morphTargetDictionary || {};
-  morphMap = Object.entries(dict).map(([name, idx]) => [AvatarCore.norm(name), idx]);
+  morphMap = Object.entries(mesh.morphTargetDictionary || {}).map(([name, idx]) => [AvatarCore.norm(name), idx]);
   group.add(g.scene);
   const box = new THREE.Box3().setFromObject(g.scene);
   const c = box.getCenter(new THREE.Vector3());
@@ -126,16 +125,15 @@ const blinker = AvatarCore.makeBlink({ autoBlink: () => true, intervalMs: () => 
 $("blinkBtn").onclick = () => blinker.trigger();
 
 const mirror = AvatarCore.makeMirror({
-  gain: { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 },
   onStatus: setStatus,
 });
 $("mirrorBtn").onclick = () => {
   if (mirror.on) {
-    mirror.stop(); $("mirrorBtn").classList.remove("on"); $("mirrorBtn").textContent = "🪞 미러링 시작";
+    mirror.stop(); $("mirrorBtn").textContent = "🪞 미러링 시작";
     return;
   }
-  mirror.start().then(() => { $("mirrorBtn").classList.add("on"); $("mirrorBtn").textContent = "⏹ 미러링 종료"; })
-    .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
+  mirror.start().then(() => { $("mirrorBtn").textContent = "⏹ 미러링 종료"; })
+    .catch(e => { mirror.stop(); $("mirrorBtn").textContent = "🪞 미러링 시작"; setStatus("미러링 실패: " + e.message, true); });
 };
 
 // ---------- 렌더 루프 (studio3d 에서 발화·감정 뺀 것) ----------

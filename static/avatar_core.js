@@ -4,6 +4,7 @@
  * docs/avatar_core.js 는 이 파일의 복사본이다 — 수정 후 반드시
  *     cp static/avatar_core.js docs/
  * 로 동기화할 것. (app.py 기동 시 두 사본 해시를 비교해 불일치를 경고한다.)
+ * drawface-live/docs/ 에도 vendored 사본이 있다 — 코어 수정 시 그쪽도 cp 로 갱신.
  *
  * 일반 <script src> 로 로드되는 전역 스크립트이며 window.AvatarCore 를 정의한다.
  * 소비 페이지보다 먼저 로드할 것. 팩토리 함수들은 정의 시점에 DOM/전역에 접근하지 않고,
@@ -560,9 +561,11 @@ window.AvatarCore = (() => {
   // ---------- 웹캠 표정 미러링 (MediaPipe FaceLandmarker 블렌드셰이프 52채널) ----------
   // 브라우저 전용(서버·GPU 추론 불필요, github.io OK). 채널 이름이 ARKit 표준이라 lowercase 로
   // 렌더러 W() 채널과 1:1. 시작 시 30프레임 중립 캘리브레이션 후 상대값만 전이(drawface 정규화).
-  // 사용: const mirror = makeMirror({ gain, onStatus }); 렌더 루프에서 mirror.tick(now) 후
-  // mirror.w 를 smooth 에 max-결합. 머리 회전은 산만해서 전이하지 않는다(표정 채널만).
-  function makeMirror({ gain = {}, onStatus } = {}) {
+  // 사용: const mirror = makeMirror({ onStatus }); 렌더 루프에서 mirror.apply(smooth, now) 한 줄.
+  // 머리 회전은 산만해서 전이하지 않는다(표정 채널만). gain 기본값은 말하기 수준 벌림 보정 —
+  // 페이지별 오버라이드 가능하나 6페이지 실측에서 동일 값이 맞았다.
+  function makeMirror({ gain, onStatus } = {}) {
+    gain = gain || { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 };
     const st = { on: false, w: null, neutral: null, samples: [] };
     let lm = null, video = null, lastT = -1;
     const say = (msg, err) => onStatus && onStatus(msg, err);
@@ -605,6 +608,7 @@ window.AvatarCore = (() => {
         const n = {};
         for (const k in raw) n[k] = st.samples.reduce((a, s) => a + (s[k] || 0), 0) / st.samples.length;
         st.neutral = n;
+        st.samples = null;   // 캘리브레이션 끝 — 샘플 버퍼 해제
         say("🪞 미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
         return;
       }
@@ -619,9 +623,8 @@ window.AvatarCore = (() => {
     }
     return {
       get on() { return st.on; },
-      get w() { return st.w; },
-      start, stop, tick,
-      // 렌더 루프 한 줄 헬퍼: tick + smooth 에 max-결합
+      start, stop,
+      // 렌더 루프 한 줄: 추론 tick + smooth 에 max-결합
       apply(smooth, now) {
         tick(now);
         if (st.w) for (const k in st.w) smooth[k] = Math.max(smooth[k] || 0, st.w[k]);

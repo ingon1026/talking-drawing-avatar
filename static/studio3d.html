@@ -190,7 +190,6 @@ $("blinkBtn").onclick = () => blinker.trigger();
 
 // ---------- 웹캠 미러링 (코어 makeMirror — MediaPipe 블렌드셰이프 → mark 모프타깃) ----------
 const mirror = AvatarCore.makeMirror({
-  gain: { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 },  // 말하기 수준 벌림 보정
   onStatus: setStatus,
 });
 $("mirrorBtn").onclick = () => {
