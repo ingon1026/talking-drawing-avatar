@@ -251,10 +251,6 @@ $("mirrorBtn").onclick = () => {
 };
 
 // ---------- 렌더 루프 ----------
-// 머리 회전 부호 — 실사용에서 뒤집혀 보이면 여기만 바꾼다 (?hs=y,p,r 로 즉석 실험 가능)
-const hsQ = new URLSearchParams(location.search).get("hs");
-const hsv = hsQ ? hsQ.split(",").map(Number) : [1, 1, 1];
-const SIGN = { y: hsv[0] || 1, p: hsv[1] || 1, r: hsv[2] || 1 };
 const HEAD_SHIFT = 10;   // 2D 라 yaw·pitch 는 회전 대신 평행이동(%) — roll 만 실제 기울기
 
 function render(now) {
@@ -286,8 +282,8 @@ function render(now) {
   headWander(shakeEl, now, W("jawopen"), sway, emo.current());   // 감정 → 몸짓 연동
   // 토글 ON 이면 웹캠 머리 자세를 흔들림 위에 덧붙인다 (headWander 가 매 프레임 = 로 재설정하므로 누적 없음)
   const h = $("headMove").checked ? mirror.head() : null;
-  if (h) shakeEl.style.transform += ` rotate(${(SIGN.r * h[2]).toFixed(5)}rad)`
-    + ` translate(${(SIGN.y * h[0] * HEAD_SHIFT).toFixed(3)}%, ${(SIGN.p * h[1] * HEAD_SHIFT).toFixed(3)}%)`;
+  if (h) shakeEl.style.transform += ` rotate(${(h[2]).toFixed(5)}rad)`
+    + ` translate(${(h[0] * HEAD_SHIFT).toFixed(3)}%, ${(h[1] * HEAD_SHIFT).toFixed(3)}%)`;
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }

@@ -638,6 +638,14 @@ window.AvatarCore = (() => {
     return [(L.gx + R.gx) / 2, (L.gy + R.gy) / 2];
   }
 
+  // 머리 회전 부호 — 거울 방향은 렌더러와 무관하게 공통이라 코어에서 한 번만 정한다.
+  // 실사용에서 뒤집혀 보이면 ?hs=y,p,r (예: ?hs=-1,1,1) 로 즉석 실험 후 아래 기본값을 확정.
+  const HEAD_SIGN = (() => {
+    const q = new URLSearchParams(location.search).get("hs");
+    const v = q ? q.split(",").map(Number) : [];
+    return [v[0] || 1, v[1] || 1, v[2] || 1];
+  })();
+
   // ---------- 웹캠 표정 미러링 (MediaPipe FaceLandmarker 블렌드셰이프 52채널) ----------
   // 브라우저 전용(서버·GPU 추론 불필요, github.io OK). 채널 이름이 ARKit 표준이라 lowercase 로
   // 렌더러 W() 채널과 1:1. 시작 시 30프레임 중립 캘리브레이션 후 상대값만 전이(drawface 정규화).
@@ -678,14 +686,14 @@ window.AvatarCore = (() => {
     // 머리 회전: MediaPipe 얼굴 변환행렬(열 우선 4x4) → yaw·pitch·roll(rad).
     // 중립 캘리브레이션 기준 편차만 쓰고, 강한 평활(0.88)+클램프로 산만함을 억제한다.
     function headFromMatrix(m) {
-      if (!m) { st.head = null; return; }
+      if (!m || st.samples) { st.head = null; return; }   // 캘리브레이션 중엔 머리 미산출
       // 열 우선(col*4+row): m[8]=R02, m[9]=R12, m[10]=R22, m[1]=R10, m[5]=R11.
       // 표준 Tait-Bryan(Y-X-Z) 추출 — 축 혼선 없이 yaw/pitch/roll 분리.
       const pitch = Math.asin(Math.max(-1, Math.min(1, -m[9])));
       const yaw = Math.atan2(m[8], m[10]);
       const roll = Math.atan2(m[1], m[5]);
       const cur = [yaw, pitch, roll];
-      if (!st.hN) { st.hN = cur.slice(); }          // 첫 프레임을 임시 중립(캘리브 끝에 확정)
+      if (!st.hN) st.hN = cur.slice();             // 캘리브 직후 첫 프레임 = 중립 자세
       const rel = cur.map((v, i) => v - st.hN[i]);
       const cl = (v, lim) => Math.max(-lim, Math.min(lim, v));
       const t = [cl(rel[0], 0.5), cl(rel[1], 0.35), cl(rel[2], 0.35)];
@@ -723,7 +731,6 @@ window.AvatarCore = (() => {
           : [0, 0];
         st.neutral = n;
         st.samples = null; st.gsamples = null;   // 캘리브레이션 끝 — 샘플 버퍼 해제
-        st.hN = null; st.head = null;            // 머리 중립도 이 시점 자세로 재설정
         say("🪞 미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
         return;
       }
@@ -757,9 +764,9 @@ window.AvatarCore = (() => {
         tick(now);
         if (st.w) for (const k in st.w) smooth[k] = Math.max(smooth[k] || 0, st.w[k]);
       },
-      // 머리 회전 [yaw, pitch, roll] (rad, 중립 대비·평활·클램프됨). 미검출/미시작이면 null.
-      // 페이지가 켤지 말지 결정한다 — 기본은 표정만 전이(머리는 산만할 수 있음).
-      head: () => st.head,
+      // 머리 회전 [yaw, pitch, roll] (rad, 중립 대비·평활·클램프·부호적용됨). 미검출/미시작이면 null.
+      // 페이지가 켤지 말지만 결정한다 — 축 매핑은 페이지 몫, 부호(거울 방향)는 전 페이지 공통이라 여기서.
+      head: () => st.head && st.head.map((v, i) => HEAD_SIGN[i] * v),
       // 분석 패널용: 원본 비디오 + 478점 랜드마크 + 캘리브레이션된 채널값(캐릭터 구동값과 동일)
       debug: () => ({ video, lm: st.lm, w: st.w }),
     };

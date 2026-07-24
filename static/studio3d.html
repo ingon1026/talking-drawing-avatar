@@ -205,10 +205,6 @@ $("mirrorBtn").onclick = () => {
 };
 
 // ---------- 렌더 루프 ----------
-// 머리 회전 부호 — 실사용에서 뒤집혀 보이면 여기만 바꾼다 (?hs=y,p,r 로 즉석 실험 가능)
-const hsQ = new URLSearchParams(location.search).get("hs");
-const hsv = hsQ ? hsQ.split(",").map(Number) : [1, 1, 1];
-const SIGN = { y: hsv[0] || 1, p: hsv[1] || 1, r: hsv[2] || 1 };
 function render(now) {
   requestAnimationFrame(render);
   if (!mesh) return;
@@ -241,7 +237,7 @@ function render(now) {
   }
   // 토글 ON 이면 웹캠 머리 자세를 위에 얹는다 (OFF 면 기존 동작 그대로)
   const h = $("headMove").checked ? mirror.head() : null;
-  if (h) group.rotation.set(userPitch + nod * 0.04 + hPitch + SIGN.p * h[1], userYaw + hYaw + SIGN.y * h[0], hRoll + SIGN.r * h[2]);
+  if (h) group.rotation.set(userPitch + nod * 0.04 + hPitch + h[1], userYaw + hYaw + h[0], hRoll + h[2]);
   else group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);
 
   renderer.render(scene, camera);

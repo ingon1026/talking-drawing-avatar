@@ -82,7 +82,7 @@ const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -
 
 const group = new THREE.Group();
 scene.add(group);
-let mesh = null, eyes = [], morphMap = [];
+let morphMeshes = [], eyes = [];
 let smooth = {};
 const W = k => smooth[k] || 0;
 
@@ -120,10 +120,16 @@ function loadHead(name) {
     group.position.set(0, 0, 0);
     group.updateMatrixWorld(true);          // .position 을 matrixWorld 에 반영 후 bbox 계산
     sceneNode = g.scene;
-    mesh = null;
-    sceneNode.traverse(o => { if (o.isMesh && o.morphTargetInfluences) { mesh = o; o.frustumCulled = false; } });
-    if (!mesh) { setStatus(name + ": 모프타깃 메시를 못 찾음", true); return; }
-    morphMap = Object.entries(mesh.morphTargetDictionary || {}).map(([n, i]) => [AvatarCore.norm(n), i]);
+    // 모프 가진 메시를 전부 모은다 — RPM 은 머리·눈·이빨이 각각 모프를 갖고 있어
+    // 하나만 구동하면 눈·이빨이 따로 논다 (석고는 단일 메시라 결과적으로 1개).
+    morphMeshes = [];
+    sceneNode.traverse(o => {
+      if (!o.isMesh || !o.morphTargetInfluences) return;
+      o.frustumCulled = false;
+      morphMeshes.push({ inf: o.morphTargetInfluences,
+        map: Object.entries(o.morphTargetDictionary || {}).map(([n, i]) => [AvatarCore.norm(n), i]) });
+    });
+    if (!morphMeshes.length) { setStatus(name + ": 모프타깃 메시를 못 찾음", true); return; }
     group.add(sceneNode);
     const box = new THREE.Box3().setFromObject(sceneNode);
     const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
@@ -135,7 +141,7 @@ function loadHead(name) {
     camera.position.set(0, 0, headH * 2.0);
     camera.lookAt(0, 0, 0);
     camera.near = headH / 100; camera.far = headH * 100; camera.updateProjectionMatrix();
-    setStatus(`🪞 미러링 시작을 누르고 카메라를 허용해주세요 — 모프 ${morphMap.length}개`);
+    setStatus("🪞 미러링 시작을 누르고 카메라를 허용해주세요");
   };
   setStatus(name + " 로딩 중…");
   if (cache[name]) return done(cache[name]);
@@ -186,23 +192,20 @@ $("mirrorBtn").onclick = () => {
 };
 
 // ---------- 렌더 루프 (studio3d 에서 발화·감정 뺀 것) ----------
-// 머리 회전 부호 — 실사용에서 뒤집혀 보이면 여기만 바꾼다 (?hs=y,p,r 로 즉석 실험 가능)
-const hsQ = new URLSearchParams(location.search).get("hs");
-const hsv = hsQ ? hsQ.split(",").map(Number) : [1, 1, 1];
-const SIGN = { y: hsv[0] || 1, p: hsv[1] || 1, r: hsv[2] || 1 };
 let nod = 0, dbgAt = 0;
 function render(now) {
   requestAnimationFrame(render);
-  if (!mesh) return;
+  if (!morphMeshes.length) return;
 
   smooth = {};
   mirror.apply(smooth, now);   // 웹캠 표정 채널
   mpanel.draw(W);   // 비교군 패널
   const blink = Math.max(blinker.value(now), W("eyeblinkleft"), W("eyeblinkright"));
 
-  const inf = mesh.morphTargetInfluences;
-  for (const [k, idx] of morphMap) {
-    inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
+  for (const { inf, map } of morphMeshes) {
+    for (const [k, idx] of map) {
+      inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
+    }
   }
 
   const [gsx, gsy] = gaze(0, W);   // 미러링 시선 채널 > 커서
@@ -212,14 +215,14 @@ function render(now) {
   nod = 0.85 * nod + 0.15 * W("jawopen");
   const on = $("headMove").checked;
   const h = on ? mirror.head() : null;
-  if (h) group.rotation.set(userPitch + SIGN.p * h[1] + nod * 0.04, userYaw + SIGN.y * h[0], SIGN.r * h[2]);
+  if (h) group.rotation.set(userPitch + h[1] + nod * 0.04, userYaw + h[0], h[2]);
   else group.rotation.set(userPitch + nod * 0.04, userYaw, 0);
   if (on && now - dbgAt > 150) {   // 값이 오는지·부호가 맞는지 눈으로 확인
     dbgAt = now;
     $("headDbg").textContent = h
       ? `머리 yaw ${h[0] >= 0 ? "+" : ""}${h[0].toFixed(2)}  pitch ${h[1] >= 0 ? "+" : ""}${h[1].toFixed(2)}  roll ${h[2] >= 0 ? "+" : ""}${h[2].toFixed(2)}`
       : (mirror.on ? "머리 값 없음 — 얼굴 미검출 또는 캘리브레이션 중" : "미러링을 시작하세요");
-  } else if (!on) $("headDbg").textContent = "";
+  } else if (!on && $("headDbg").textContent) $("headDbg").textContent = "";   // 켜져 있던 흔적만 1회 지움
   renderer.render(scene, camera);
 }
 requestAnimationFrame(render);
