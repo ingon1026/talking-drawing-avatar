@@ -629,6 +629,8 @@ window.AvatarCore = (() => {
       if (!st.neutral) {                          // 30프레임 평균 = 중립
         st.samples.push(raw);
         if (g) st.gsamples.push(g);
+        // 캘리브레이션 중 움직이면 중립이 오염되므로 진행 상황을 안내 (6프레임마다 갱신)
+        if (st.samples.length % 6 === 1) say(`🎯 정면을 보고 무표정을 유지해주세요… ${st.samples.length}/30`);
         if (st.samples.length < 30) return;
         const n = {};
         for (const k in raw) n[k] = st.samples.reduce((a, s) => a + (s[k] || 0), 0) / st.samples.length;
