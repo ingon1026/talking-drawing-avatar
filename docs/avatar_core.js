@@ -558,6 +558,25 @@ window.AvatarCore = (() => {
     return REACTIONS[i];
   }
 
+  // ---------- 아이리스 시선 (478점 랜드마크의 홍채 10점 → [-1..1] 근사) ----------
+  // 홍채 중심이 눈꼬리(가로)·눈꺼풀(세로) 기준 어디 있는지의 비율 — 머리 회전에 1차 자체 보정.
+  // 눈을 거의 감으면(개방도 < 0.28) null — 호출측이 직전 시선을 유지하게 한다(깜빡임 간섭 차단).
+  function irisGaze(lm) {
+    if (!lm || lm.length < 478) return null;
+    const eye = (iris0, c0, c1, top, bot) => {
+      let ix = 0, iy = 0;
+      for (let i = iris0; i < iris0 + 5; i++) { ix += lm[i].x / 5; iy += lm[i].y / 5; }
+      const halfW = Math.abs(lm[c1].x - lm[c0].x) / 2 || 1e-6;
+      const h = Math.abs(lm[bot].y - lm[top].y);
+      const cx = (lm[c0].x + lm[c1].x) / 2, cy = (lm[top].y + lm[bot].y) / 2;
+      return { gx: (ix - cx) / halfW, gy: (iy - cy) / Math.max(h, 1e-6), open: h / halfW };
+    };
+    const L = eye(468, 33, 133, 159, 145);    // 영상 기준 왼눈
+    const R = eye(473, 362, 263, 386, 374);   // 영상 기준 오른눈
+    if ((L.open + R.open) / 2 < 0.28) return null;   // 감김 — 세로 신호 무의미
+    return [(L.gx + R.gx) / 2, (L.gy + R.gy) / 2];
+  }
+
   // ---------- 웹캠 표정 미러링 (MediaPipe FaceLandmarker 블렌드셰이프 52채널) ----------
   // 브라우저 전용(서버·GPU 추론 불필요, github.io OK). 채널 이름이 ARKit 표준이라 lowercase 로
   // 렌더러 W() 채널과 1:1. 시작 시 30프레임 중립 캘리브레이션 후 상대값만 전이(drawface 정규화).
@@ -566,7 +585,7 @@ window.AvatarCore = (() => {
   // 페이지별 오버라이드 가능하나 6페이지 실측에서 동일 값이 맞았다.
   function makeMirror({ gain, onStatus } = {}) {
     gain = gain || { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 };
-    const st = { on: false, w: null, neutral: null, samples: [] };
+    const st = { on: false, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0] };
     let lm = null, video = null, lastT = -1;
     const say = (msg, err) => onStatus && onStatus(msg, err);
 
@@ -585,7 +604,7 @@ window.AvatarCore = (() => {
       video.muted = true;
       video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       await video.play();
-      Object.assign(st, { on: true, w: null, neutral: null, samples: [] });
+      Object.assign(st, { on: true, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0] });
       say("🪞 캘리브레이션 — 정면·무표정으로 잠시 계세요");
     }
     function stop() {
@@ -594,23 +613,48 @@ window.AvatarCore = (() => {
       video = null;
       say("");
     }
+    const LOOK = ["eyelookoutright", "eyelookinleft", "eyelookoutleft", "eyelookinright",
+                  "eyelookdownleft", "eyelookdownright", "eyelookupleft", "eyelookupright"];
     function tick(now) {
       if (!st.on || !video || video.readyState < 2) return;
       if (video.currentTime === lastT) return;   // 새 비디오 프레임에서만 추론
       lastT = video.currentTime;
-      const cats = lm.detectForVideo(video, now).faceBlendshapes?.[0]?.categories;
+      const res = lm.detectForVideo(video, now);
+      const cats = res.faceBlendshapes?.[0]?.categories;
       if (!cats) { st.w = null; return; }        // 얼굴 놓침 → 개입 중단(자연 복귀)
       const raw = {};
       for (const c of cats) raw[c.categoryName.toLowerCase()] = c.score;
+      const g = irisGaze(res.faceLandmarks?.[0]);   // 아이리스 정밀 시선 (감김이면 null)
       if (!st.neutral) {                          // 30프레임 평균 = 중립
         st.samples.push(raw);
+        if (g) st.gsamples.push(g);
         if (st.samples.length < 30) return;
         const n = {};
         for (const k in raw) n[k] = st.samples.reduce((a, s) => a + (s[k] || 0), 0) / st.samples.length;
+        // 시선은 아이리스 합성값으로 대체되므로 eyeLook 채널의 블렌드셰이프 중립은 0으로 —
+        // 합성값(이미 게인·클램프 적용)이 표준 파이프라인(중립차감·EMA)을 그대로 통과하게 한다.
+        for (const k of LOOK) n[k] = 0;
+        st.gN = st.gsamples.length
+          ? [st.gsamples.reduce((a, v) => a + v[0], 0) / st.gsamples.length,
+             st.gsamples.reduce((a, v) => a + v[1], 0) / st.gsamples.length]
+          : [0, 0];
         st.neutral = n;
-        st.samples = null;   // 캘리브레이션 끝 — 샘플 버퍼 해제
+        st.samples = null; st.gsamples = null;   // 캘리브레이션 끝 — 샘플 버퍼 해제
         say("🪞 미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
         return;
+      }
+      // 아이리스 시선 → eyeLook 8채널 합성 덮어쓰기 (블렌드셰이프 시선치는 거칠어서 대체).
+      // 부호: 거울 느낌 — 사용자가 화면 왼쪽을 보면 캐릭터 눈동자도 화면 왼쪽으로.
+      if (g) {
+        const cl = v => Math.max(-1, Math.min(1, v));
+        const gx = cl(-(g[0] - st.gN[0]) * (gain.gazeX ?? 2.4));
+        const gy = cl((g[1] - st.gN[1]) * (gain.gazeY ?? 1.4));   // 세로는 눈꺼풀 가림 탓 신호 약함 → 낮은 게인
+        raw.eyelookoutright = raw.eyelookinleft = Math.max(0, gx);
+        raw.eyelookoutleft = raw.eyelookinright = Math.max(0, -gx);
+        raw.eyelookdownleft = raw.eyelookdownright = Math.max(0, gy);
+        raw.eyelookupleft = raw.eyelookupright = Math.max(0, -gy);
+      } else {
+        for (const k of LOOK) delete raw[k];   // 깜빡임 등 — 직전 시선(EMA) 유지
       }
       const w = st.w || {};
       for (const k in raw) {
@@ -838,6 +882,6 @@ window.AvatarCore = (() => {
     norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
-    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror,
+    bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze,
   };
 })();
