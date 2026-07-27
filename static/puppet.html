@@ -251,7 +251,6 @@ $("mirrorBtn").onclick = () => {
 };
 
 // ---------- 렌더 루프 ----------
-const HEAD_SHIFT = 10;   // 2D 라 yaw·pitch 는 회전 대신 평행이동(%) — roll 만 실제 기울기
 
 function render(now) {
   requestAnimationFrame(render);
@@ -279,11 +278,10 @@ function render(now) {
 
   // 머리 움직임: 발화 에너지(끄덕임) + 느린 표류 + 잔잔한 사인
   const sway = anim && !audio.paused ? 1 : 0.5;
-  headWander(shakeEl, now, W("jawopen"), sway, emo.current());   // 감정 → 몸짓 연동
+  // 감정 → 몸짓 연동 + 머리 움직임 토글 ON 이면 웹캠 고개 방향 합성
+  headWander(shakeEl, now, W("jawopen"), sway, emo.current(), $("headMove").checked ? mirror.head() : null);
   // 토글 ON 이면 웹캠 머리 자세를 흔들림 위에 덧붙인다 (headWander 가 매 프레임 = 로 재설정하므로 누적 없음)
-  const h = $("headMove").checked ? mirror.head() : null;
-  if (h) shakeEl.style.transform += ` rotate(${(h[2]).toFixed(5)}rad)`
-    + ` translate(${(h[0] * HEAD_SHIFT).toFixed(3)}%, ${(h[1] * HEAD_SHIFT).toFixed(3)}%)`;
+
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }

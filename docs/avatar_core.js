@@ -214,11 +214,17 @@ window.AvatarCore = (() => {
     shy:      { speed: 0.8,  amp: 0.6,  droop: 5,  beat: 0.5 },  // 수줍게 숙임
   };
 
+  // 2D 는 스프라이트라 yaw·pitch 를 회전시킬 수 없다 — 평행이동(%)으로 근사한다.
+  // 코어 클램프(±0.5/±0.35rad)에서 최대 ±5%/±3.5% 이동 — 과하면 얼굴이 프레임을 벗어난다.
+  const HEAD_SHIFT = 10;
+
   function makeHeadWander() {
     let nod = 0, wanderNext = 0, wanderR = 0, wanderY = 0, wanderGoalR = 0, wanderGoalY = 0;
     let beat = 0, beatTilt = 0, lowSince = 0;  // 강조 제스처: 구절 시작마다 끄덕임 임펄스
     let phR = 0, phY = 0, phB = 0, last = 0;   // 사인 위상 누적 — 감정 배속이 변해도 위상 연속(점프 없음)
-    return function tick(shakeEl, now, jawopen, sway, emoState) {
+    // head: 웹캠 머리 자세 [yaw, pitch, roll] (mirror.head(), 선택). 2D 라 roll 은 실제 기울기,
+    // yaw·pitch 는 회전 대신 평행이동으로 근사한다 — 스프라이트를 3D 로 돌릴 수 없으므로.
+    return function tick(shakeEl, now, jawopen, sway, emoState, head) {
       const m = emoState && EMO_MOTION[emoState.key], lv = m ? Math.min(emoState.level, 1) : 0;
       const speed = 1 + ((m ? m.speed : 1) - 1) * lv;
       const amp = 1 + ((m ? m.amp : 1) - 1) * lv;
@@ -253,7 +259,12 @@ window.AvatarCore = (() => {
       const dy = Math.sin(phY) * 1.5 * sway * amp + wanderY * amp + nod * 3 + breath + beat * 7 * beatG + droop;
       // 머리 흔들림은 두 캔버스(WebGL base + 2D 오버레이)를 함께 감싼 래퍼에 CSS 변환으로 적용.
       // transform-origin=center + translateY(% of height) 조합이 기존 ctx translate/rotate와 수학적으로 동일.
-      shakeEl.style.transform = `rotate(${rot.toFixed(5)}rad) translateY(${(dy / 512 * 100).toFixed(4)}%)`;
+      // 웹캠 머리 자세가 있으면 같은 문자열에 합성 — 유휴 흔들림 위에 실제 고개 방향이 얹힌다.
+      const hR = head ? head[2] : 0;                      // 갸웃 = 실제 회전
+      const hX = head ? head[0] * HEAD_SHIFT : 0;         // 좌우 = 평행이동(%)
+      const hY = head ? head[1] * HEAD_SHIFT : 0;         // 상하 = 평행이동(%)
+      shakeEl.style.transform =
+        `rotate(${(rot + hR).toFixed(5)}rad) translate(${hX.toFixed(3)}%, ${(dy / 512 * 100 + hY).toFixed(4)}%)`;
     };
   }
 
