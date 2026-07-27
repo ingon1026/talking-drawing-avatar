@@ -619,6 +619,40 @@ window.AvatarCore = (() => {
     };
   }
 
+  // ---------- 2D 캐릭터 그리기 (소년·소녀 공용) ----------
+  // 파츠 스프라이트(눈썹·눈·동공) + 벡터 입을 한 번에. 워프를 쓰는 페이지는 warp 를 넘기면
+  // 배경/턱 오프셋을 워프 기준으로, 안 넘기면 흰 배경 + manifest.jawDrop 폴백으로 그린다.
+  //
+  // ctx: 2D 컨텍스트(512²), parts: 이미지 맵, manifest: 캐릭터 튜닝값,
+  // W: 채널 접근자, blink: 깜빡임(자동+미러 max 결합), gaze: [gx, gy],
+  // opts.warp: makeWarp 인스턴스(선택), opts.clearBg: 배경 채우기 여부(클린 모드면 false)
+  function drawChar2D(ctx, { parts, manifest, W, blink, gaze, warp, clearBg = true }) {
+    if (!parts.base || !manifest) return false;
+    const warpOn = !!(warp && warp.ready);
+    ctx.clearRect(0, 0, 512, 512);
+    const draw = (n, dy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dy);
+    const drawXY = (n, dx, dy) => parts[n] && ctx.drawImage(parts[n], dx, dy);
+    // 워프가 켜져 있으면 base 는 WebGL 레이어가 그리므로 여기선 생략
+    if (!warpOn) {
+      if (clearBg) { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 512, 512); }
+      draw("base");
+    }
+    const bR = manifest.browRange || 0;
+    const browUp = -bR * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
+                 + bR * 0.8 * (W("browdownleft") + W("browdownright")) / 2;   // 찡그림은 반대로 내림
+    draw("brow_L", browUp); draw("brow_R", browUp);
+    if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
+    else {
+      draw("eye_L_open"); draw("eye_R_open");
+      const pr = manifest.pupilRange || 0;
+      drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
+    }
+    const jawDy = warp ? warp.jawOverlayDy(W("jawopen"), warpOn, manifest)
+                       : W("jawopen") * (manifest.jawDrop || 8);
+    drawVectorMouth(ctx, W, manifest, jawDy);
+    return warpOn;
+  }
+
   // ---------- 3D 헤드 마운트 (mark·claire·RPM 공용) ----------
   // 씬에 GLB 를 얹고 ① 모프 구동 대상 수집 ② 눈알 구체(필요 시) ③ 카메라 프레이밍까지 한 번에.
   // three.js 는 페이지가 importmap 으로 로드하므로 THREE 를 주입받는다(코어는 클래식 스크립트).
@@ -1047,6 +1081,6 @@ window.AvatarCore = (() => {
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
-    mountHead3D, applyMorphs,
+    mountHead3D, applyMorphs, drawChar2D,
   };
 })();
