@@ -619,6 +619,72 @@ window.AvatarCore = (() => {
     };
   }
 
+  // ---------- 3D 헤드 마운트 (mark·claire·RPM 공용) ----------
+  // 씬에 GLB 를 얹고 ① 모프 구동 대상 수집 ② 눈알 구체(필요 시) ③ 카메라 프레이밍까지 한 번에.
+  // three.js 는 페이지가 importmap 으로 로드하므로 THREE 를 주입받는다(코어는 클래식 스크립트).
+  //
+  // cfg: { eyeSpheres, headFrac } — eyeSpheres 는 안구 메시가 없는 석고 헤드용,
+  //   headFrac 는 모델 높이 중 머리가 차지하는 비율(석고=1 머리만 / RPM≈0.22 반신).
+  // 반환: { sceneNode, morphMeshes, eyes } — morphMeshes 는 {inf, map} 배열로,
+  //   RPM 처럼 머리·눈·이빨이 각각 모프를 가진 모델도 전부 구동된다(하나만 쓰면 눈·이빨이 따로 논다).
+  function mountHead3D(THREE, { group, camera, gltf, cfg, prev }) {
+    if (prev) {
+      if (prev.sceneNode) group.remove(prev.sceneNode);
+      (prev.eyes || []).forEach(e => group.remove(e));
+    }
+    group.position.set(0, 0, 0);
+    group.updateMatrixWorld(true);   // .position 변경을 matrixWorld 에 즉시 반영 —
+                                     // 안 하면 setFromObject 가 이전 헤드 오프셋을 물어 bbox 가 어긋난다
+    const sceneNode = gltf.scene;
+    const morphMeshes = [];
+    sceneNode.traverse(o => {
+      if (!o.isMesh || !o.morphTargetInfluences) return;
+      o.frustumCulled = false;       // 모프로 변형되면 원래 바운딩을 벗어나 컬링될 수 있다
+      morphMeshes.push({ inf: o.morphTargetInfluences,
+        map: Object.entries(o.morphTargetDictionary || {}).map(([n, i]) => [norm(n), i]) });
+    });
+    if (!morphMeshes.length) return null;   // 표정 모프가 없는 모델 — 호출측이 상태 표시
+    group.add(sceneNode);
+
+    const box = new THREE.Box3().setFromObject(sceneNode);
+    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+    const eyes = cfg.eyeSpheres ? [makeEyeball(THREE, group, 1, box), makeEyeball(THREE, group, -1, box)] : [];
+    // 프레이밍: 석고는 전체가 머리 / 반신 모델은 상단 headFrac 만큼을 머리로 보고 맞춘다
+    const headH = s.y * cfg.headFrac;
+    const focusY = cfg.headFrac === 1 ? c.y : box.max.y - headH * 0.42;
+    group.position.set(-c.x, -focusY, -c.z);   // 헤드·눈 함께 recenter
+    camera.position.set(0, 0, headH * 2.0); camera.lookAt(0, 0, 0);
+    camera.near = headH / 100; camera.far = headH * 100; camera.updateProjectionMatrix();
+    return { sceneNode, morphMeshes, eyes };
+  }
+
+  // 눈알 구체 — 안구 메시가 없는 석고 헤드(mark·claire)의 소켓을 채운다.
+  // 위치·크기는 mark 로 보정한 bbox 분율이라 헤드 크기가 달라도 따라간다.
+  function makeEyeball(THREE, group, sign, box) {
+    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+    const k = s.y / 41.5;   // mark 기준 스케일
+    const eg = new THREE.Group();
+    eg.position.set(c.x + sign * 0.111 * s.x, c.y + 0.151 * s.y, c.z + 0.284 * s.z);
+    const mat = (color, roughness) => new THREE.MeshStandardMaterial({ color, roughness });
+    const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.15 * k, 32, 16), mat(0xf2f0ee, 0.35));
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(0.46 * k, 24, 12), mat(0x44546e, 0.3));
+    iris.position.z = 0.78 * k;
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.2 * k, 16, 8), mat(0x0c0c0c, 0.4));
+    pupil.position.z = 1.0 * k;
+    eg.add(sclera, iris, pupil);
+    group.add(eg);
+    return eg;
+  }
+
+  // 모프 구동 — mountHead3D 가 준 morphMeshes 에 채널값을 쓴다. blink 는 별도(자동 깜빡임과 max 결합).
+  function applyMorphs(morphMeshes, smooth, blink) {
+    for (const { inf, map } of morphMeshes) {
+      for (const [k, idx] of map) {
+        inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
+      }
+    }
+  }
+
   // ---------- 아이리스 시선 (478점 랜드마크의 홍채 10점 → [-1..1] 근사) ----------
   // 홍채 중심이 눈꼬리(가로)·눈꺼풀(세로) 기준 어디 있는지의 비율 — 머리 회전에 1차 자체 보정.
   // 눈을 거의 감으면(개방도 < 0.28) null — 호출측이 직전 시선을 유지하게 한다(깜빡임 간섭 차단).
@@ -639,11 +705,13 @@ window.AvatarCore = (() => {
   }
 
   // 머리 회전 부호 — 거울 방향은 렌더러와 무관하게 공통이라 코어에서 한 번만 정한다.
-  // 실사용에서 뒤집혀 보이면 ?hs=y,p,r (예: ?hs=-1,1,1) 로 즉석 실험 후 아래 기본값을 확정.
+  // yaw·roll 이 음수인 이유: 웹캠 영상은 거울 반전해 쓰므로(분석 패널 scale(-1,1)) 가로 성분은
+  // 뒤집어야 사용자가 왼쪽을 향할 때 캐릭터도 화면 왼쪽을 향한다 — 시선 gx 와 같은 규약(아래 gazeX 항).
+  // pitch(상하)는 반전과 무관해 그대로. 어긋나 보이면 ?hs=y,p,r 로 실험 후 이 기본값을 고친다.
   const HEAD_SIGN = (() => {
-    const q = new URLSearchParams(location.search).get("hs");
-    const v = q ? q.split(",").map(Number) : [];
-    return [v[0] || 1, v[1] || 1, v[2] || 1];
+    const def = [-1, 1, -1];
+    const v = (new URLSearchParams(location.search).get("hs") || "").split(",").map(Number);
+    return def.map((d, i) => (Number.isFinite(v[i]) && v[i] !== 0 ? v[i] : d));
   })();
 
   // ---------- 웹캠 표정 미러링 (MediaPipe FaceLandmarker 블렌드셰이프 52채널) ----------
@@ -979,5 +1047,6 @@ window.AvatarCore = (() => {
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
+    mountHead3D, applyMorphs,
   };
 })();

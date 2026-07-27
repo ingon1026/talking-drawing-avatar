@@ -82,26 +82,9 @@ const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -
 
 const group = new THREE.Group();
 scene.add(group);
-let morphMeshes = [], eyes = [];
+let mounted = null;   // mountHead3D 결과 { sceneNode, morphMeshes, eyes }
 let smooth = {};
 const W = k => smooth[k] || 0;
-
-// 눈알 구체 — 안구 메시가 없는 석고 헤드(mark·claire)용. bbox 분율로 헤드 크기에 맞춤.
-function makeEye(sign, box) {
-  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
-  const k = s.y / 41.5;
-  const eg = new THREE.Group();
-  eg.position.set(c.x + sign * 0.111 * s.x, c.y + 0.151 * s.y, c.z + 0.284 * s.z);
-  const mat = (color, roughness) => new THREE.MeshStandardMaterial({ color, roughness });
-  const sclera = new THREE.Mesh(new THREE.SphereGeometry(1.15 * k, 32, 16), mat(0xf2f0ee, 0.35));
-  const iris = new THREE.Mesh(new THREE.SphereGeometry(0.46 * k, 24, 12), mat(0x44546e, 0.3));
-  iris.position.z = 0.78 * k;
-  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.2 * k, 16, 8), mat(0x0c0c0c, 0.4));
-  pupil.position.z = 1.0 * k;
-  eg.add(sclera, iris, pupil);
-  group.add(eg);
-  return eg;
-}
 
 // 헤드별 특성: 석고(mark·claire)는 머리만 있고 안구 메시가 없어 구체를 넣는다.
 // RPM 아바타는 반신(머리~가슴)이고 눈·머리카락·옷이 이미 있으며 eyeLook 모프로 눈이 돌아간다.
@@ -111,36 +94,12 @@ const HEADS = {
   rpm:    { url: "/static/assets3d/rpm.glb",    eyeSpheres: false, headFrac: 0.22 },
 };
 const cache = {};
-let sceneNode = null;
 function loadHead(name) {
   const cfg = HEADS[name];
   const done = g => {
-    if (sceneNode) group.remove(sceneNode);
-    eyes.forEach(e => group.remove(e)); eyes = [];
-    group.position.set(0, 0, 0);
-    group.updateMatrixWorld(true);          // .position 을 matrixWorld 에 반영 후 bbox 계산
-    sceneNode = g.scene;
-    // 모프 가진 메시를 전부 모은다 — RPM 은 머리·눈·이빨이 각각 모프를 갖고 있어
-    // 하나만 구동하면 눈·이빨이 따로 논다 (석고는 단일 메시라 결과적으로 1개).
-    morphMeshes = [];
-    sceneNode.traverse(o => {
-      if (!o.isMesh || !o.morphTargetInfluences) return;
-      o.frustumCulled = false;
-      morphMeshes.push({ inf: o.morphTargetInfluences,
-        map: Object.entries(o.morphTargetDictionary || {}).map(([n, i]) => [AvatarCore.norm(n), i]) });
-    });
-    if (!morphMeshes.length) { setStatus(name + ": 모프타깃 메시를 못 찾음", true); return; }
-    group.add(sceneNode);
-    const box = new THREE.Box3().setFromObject(sceneNode);
-    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
-    if (cfg.eyeSpheres) eyes = [makeEye(1, box), makeEye(-1, box)];
-    // 프레이밍: 석고는 전체가 머리 / RPM 은 반신이라 상단 headFrac 만큼을 머리로 보고 맞춘다
-    const headH = s.y * cfg.headFrac;
-    const focusY = cfg.headFrac === 1 ? c.y : box.max.y - headH * 0.42;
-    group.position.set(-c.x, -focusY, -c.z);
-    camera.position.set(0, 0, headH * 2.0);
-    camera.lookAt(0, 0, 0);
-    camera.near = headH / 100; camera.far = headH * 100; camera.updateProjectionMatrix();
+    const r = AvatarCore.mountHead3D(THREE, { group, camera, gltf: g, cfg, prev: mounted });
+    if (!r) { setStatus(name + ": 표정 모프타깃이 없는 모델입니다", true); return; }
+    mounted = r;
     setStatus("🪞 미러링 시작을 누르고 카메라를 허용해주세요");
   };
   setStatus(name + " 로딩 중…");
@@ -195,21 +154,17 @@ $("mirrorBtn").onclick = () => {
 let nod = 0, dbgAt = 0;
 function render(now) {
   requestAnimationFrame(render);
-  if (!morphMeshes.length) return;
+  if (!mounted) return;
 
   smooth = {};
   mirror.apply(smooth, now);   // 웹캠 표정 채널
   mpanel.draw(W);   // 비교군 패널
   const blink = Math.max(blinker.value(now), W("eyeblinkleft"), W("eyeblinkright"));
 
-  for (const { inf, map } of morphMeshes) {
-    for (const [k, idx] of map) {
-      inf[idx] = k === "eyeblinkleft" || k === "eyeblinkright" ? blink : (smooth[k] || 0);
-    }
-  }
+  AvatarCore.applyMorphs(mounted.morphMeshes, smooth, blink);
 
   const [gsx, gsy] = gaze(0, W);   // 미러링 시선 채널 > 커서
-  for (const e of eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
+  for (const e of mounted.eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
 
   // 머리 회전: 토글 ON 이면 웹캠 머리 자세를 전이, OFF 면 표정만 (기존 동작)
   nod = 0.85 * nod + 0.15 * W("jawopen");
