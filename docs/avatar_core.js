@@ -583,6 +583,7 @@ window.AvatarCore = (() => {
     ["시선 세로 eyeLookY", W => (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2, true],
   ];
   function makeMirrorPanel(mirror, mount) {
+    let lastFrame = -1;   // 마지막으로 캔버스에 그린 웹캠 프레임 번호
     mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">📊 비교군 — 내 얼굴 → MediaPipe 채널</div>';
     const cv = document.createElement("canvas");
     cv.width = 320; cv.height = 240;
@@ -602,6 +603,11 @@ window.AvatarCore = (() => {
       draw(W) {
         if (!mount.offsetParent) return;   // 숨김 상태 — 일 안 함
         const d = mirror.debug();
+        // 웹캠 프레임이 그대로면 같은 그림을 다시 그리게 된다 — 렌더 루프(60~144fps)가
+        // 추론(~30fps)보다 빨라 4~5배 헛일이 된다. 채널 막대는 값이 바뀔 수 있어 계속 갱신.
+        const fresh = d.frame !== lastFrame;
+        lastFrame = d.frame;
+        if (fresh || !mirror.on) {
         const w = cv.width, h = cv.height;
         ctx.fillStyle = "#0d0d12"; ctx.fillRect(0, 0, w, h);
         if (!mirror.on || !d.video || d.video.readyState < 2) {
@@ -616,6 +622,7 @@ window.AvatarCore = (() => {
             for (let i = 468; i < d.lm.length; i++) ctx.fillRect((1 - d.lm[i].x) * w - 1.5, d.lm[i].y * h - 1.5, 3, 3);
           }
         }
+        }   // fresh 블록 끝 — 아래 채널 막대는 매 프레임 갱신(값이 계속 변한다)
         PANEL_CHS.forEach(([, get, bipolar], i) => {
           const v = get(W), b = bars[i];
           b.val.textContent = v.toFixed(2);
@@ -637,10 +644,18 @@ window.AvatarCore = (() => {
   // ctx: 2D 컨텍스트(512²), parts: 이미지 맵, manifest: 캐릭터 튜닝값,
   // W: 채널 접근자, blink: 깜빡임(자동+미러 max 결합), gaze: [gx, gy],
   // opts.warp: makeWarp 인스턴스(선택), opts.clearBg: 배경 채우기 여부(클린 모드면 false)
-  function drawChar2D(ctx, { parts, manifest, W, blink, gaze, warp, clearBg = true }) {
+  function drawChar2D(ctx, { parts, manifest, W, blink, gaze, warp, clearBg = true, head }) {
     if (!parts.base || !manifest) return false;
     const warpOn = !!(warp && warp.ready);
     ctx.clearRect(0, 0, 512, 512);
+    // head 를 주면 캔버스 자체를 변형한다 — CSS 변환이 안 먹는 경로(캔버스를 drawImage 로
+    // 합성하는 녹화 등)용. CSS 래퍼를 쓰는 페이지는 head 를 넘기지 말 것(이중 적용).
+    if (head) {
+      ctx.save();
+      ctx.translate(256 + head[0] * HEAD_SHIFT * 5.12, 256 + head[1] * HEAD_SHIFT * 5.12);
+      ctx.rotate(head[2]);
+      ctx.translate(-256, -256);
+    }
     const draw = (n, dy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dy);
     const drawXY = (n, dx, dy) => parts[n] && ctx.drawImage(parts[n], dx, dy);
     // 워프가 켜져 있으면 base 는 WebGL 레이어가 그리므로 여기선 생략
@@ -661,6 +676,7 @@ window.AvatarCore = (() => {
     const jawDy = warp ? warp.jawOverlayDy(W("jawopen"), warpOn, manifest)
                        : W("jawopen") * (manifest.jawDrop || 8);
     drawVectorMouth(ctx, W, manifest, jawDy);
+    if (head) ctx.restore();
     return warpOn;
   }
 
@@ -673,13 +689,7 @@ window.AvatarCore = (() => {
   // 반환: { sceneNode, morphMeshes, eyes } — morphMeshes 는 {inf, map} 배열로,
   //   RPM 처럼 머리·눈·이빨이 각각 모프를 가진 모델도 전부 구동된다(하나만 쓰면 눈·이빨이 따로 논다).
   function mountHead3D(THREE, { group, camera, gltf, cfg, prev }) {
-    if (prev) {
-      if (prev.sceneNode) group.remove(prev.sceneNode);
-      (prev.eyes || []).forEach(e => group.remove(e));
-    }
-    group.position.set(0, 0, 0);
-    group.updateMatrixWorld(true);   // .position 변경을 matrixWorld 에 즉시 반영 —
-                                     // 안 하면 setFromObject 가 이전 헤드 오프셋을 물어 bbox 가 어긋난다
+    // 검사를 먼저 — 실패 시 이전 헤드를 건드리지 않아야 호출측의 "실패하면 이전 상태 유지"가 성립한다.
     const sceneNode = gltf.scene;
     const morphMeshes = [];
     sceneNode.traverse(o => {
@@ -689,6 +699,18 @@ window.AvatarCore = (() => {
         map: Object.entries(o.morphTargetDictionary || {}).map(([n, i]) => [norm(n), i]) });
     });
     if (!morphMeshes.length) return null;   // 표정 모프가 없는 모델 — 호출측이 상태 표시
+
+    if (prev) {
+      if (prev.sceneNode) group.remove(prev.sceneNode);
+      // 눈알 구체는 헤드마다 새로 만드므로 교체 시 GPU 자원을 해제한다(반복 전환 시 누수).
+      (prev.eyes || []).forEach(e => {
+        group.remove(e);
+        e.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+      });
+    }
+    group.position.set(0, 0, 0);
+    group.updateMatrixWorld(true);   // .position 변경을 matrixWorld 에 즉시 반영 —
+                                     // 안 하면 setFromObject 가 이전 헤드 오프셋을 물어 bbox 가 어긋난다
     group.add(sceneNode);
 
     const box = new THREE.Box3().setFromObject(sceneNode);
@@ -767,7 +789,7 @@ window.AvatarCore = (() => {
   // 페이지별 오버라이드 가능하나 6페이지 실측에서 동일 값이 맞았다.
   function makeMirror({ gain, onStatus } = {}) {
     gain = gain || { jawopen: 1.6, mouthsmileleft: 1.4, mouthsmileright: 1.4 };
-    const st = { on: false, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0], head: null, hN: null };
+    const st = { on: false, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0], head: null, hN: null, frame: 0 };
     let lm = null, video = null, lastT = -1;
     const say = (msg, err) => onStatus && onStatus(msg, err);
 
@@ -787,7 +809,7 @@ window.AvatarCore = (() => {
       video.muted = true;
       video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       await video.play();
-      Object.assign(st, { on: true, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0], head: null, hN: null });
+      Object.assign(st, { on: true, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0], head: null, hN: null, frame: 0 });
       say("🪞 캘리브레이션 — 정면·무표정으로 잠시 계세요");
     }
     function stop() {
@@ -819,6 +841,7 @@ window.AvatarCore = (() => {
       if (!st.on || !video || video.readyState < 2) return;
       if (video.currentTime === lastT) return;   // 새 비디오 프레임에서만 추론
       lastT = video.currentTime;
+      st.frame++;                                // 패널이 "새 프레임일 때만" 다시 그리도록
       const res = lm.detectForVideo(video, now);
       const cats = res.faceBlendshapes?.[0]?.categories;
       if (!cats) { st.w = null; st.lm = null; return; }   // 얼굴 놓침 → 개입 중단(자연 복귀)
@@ -881,7 +904,7 @@ window.AvatarCore = (() => {
       // 페이지가 켤지 말지만 결정한다 — 축 매핑은 페이지 몫, 부호(거울 방향)는 전 페이지 공통이라 여기서.
       head: () => st.head && st.head.map((v, i) => HEAD_SIGN[i] * v),
       // 분석 패널용: 원본 비디오 + 478점 랜드마크 + 캘리브레이션된 채널값(캐릭터 구동값과 동일)
-      debug: () => ({ video, lm: st.lm, w: st.w }),
+      debug: () => ({ video, lm: st.lm, w: st.w, frame: st.frame }),
     };
   }
 

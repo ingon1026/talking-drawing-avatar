@@ -280,8 +280,6 @@ function render(now) {
   const sway = anim && !audio.paused ? 1 : 0.5;
   // 감정 → 몸짓 연동 + 머리 움직임 토글 ON 이면 웹캠 고개 방향 합성
   headWander(shakeEl, now, W("jawopen"), sway, emo.current(), $("headMove").checked ? mirror.head() : null);
-  // 토글 ON 이면 웹캠 머리 자세를 흔들림 위에 덧붙인다 (headWander 가 매 프레임 = 로 재설정하므로 누적 없음)
-
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }
