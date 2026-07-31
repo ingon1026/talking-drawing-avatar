@@ -61,9 +61,6 @@ TARGETS = {
     "eyewideright": ("max", 0.05),
 }
 MARGIN = 1.10  # min 기준은 target*1.10 이상, max 기준은 target/1.10 이하여야 "마진 있음"
-# static/avatar_core.js SHAPE.*.kill 과 동일 — 값이 0이라고 kill 로 단정하지 않고
-# 실제 kill 목록에 있는 채널만 그 이유를 표기한다(엔진이 애초에 안 쓰는 채널과 구분).
-KILL = {"a2f": {"jawright", "jawleft"}, "neurosync": set()}
 
 
 def _summarize(frames: list, index: list) -> dict:
@@ -98,6 +95,10 @@ async def probe(engine: str, text: str) -> dict:
         await page.goto("http://127.0.0.1:8000/3d")
         await page.wait_for_function(
             "!document.getElementById('status').textContent.includes('로딩')", timeout=90000)
+        # 값이 0이라고 kill 로 단정하지 않고, 실제 SHAPE.*.kill 목록에 있는 채널만
+        # 그 이유를 표기한다(엔진이 애초에 안 쓰는 채널과 구분) — 이 스크립트 전체가
+        # SHAPE 를 검증하는 게 목적이므로, 그 표를 손으로 다시 베끼지 않고 직접 읽는다.
+        kill = set(await page.evaluate("(e) => AvatarCore.SHAPE[e].kill", engine))
         await page.select_option("#engine", engine)
         # shaped: weightsFromAnim 이 넘겨받는 anim.frames — 운영 경로(speakFlow)가
         # shapeAnim 을 이미 1회 적용해놓은 실제 결과. 여기서 다시 셰이핑하지 않는다.
@@ -118,7 +119,7 @@ async def probe(engine: str, text: str) -> dict:
         shaped_stats = _summarize(shaped["frames"], index)
         raw_data = raw_holder.get("data")
         raw_stats = _summarize(raw_data["frames"], index) if raw_data else None
-        return {"raw": raw_stats, "shaped": shaped_stats}
+        return {"raw": raw_stats, "shaped": shaped_stats, "kill": kill}
 
 
 def verdict(kind: str, target: float, shaped: dict) -> tuple:
@@ -148,7 +149,7 @@ async def main():
                     val, ok = verdict(kind, target, sh)
                     all_ok = all_ok and ok
                     reason = ""
-                    if k in KILL[engine]:
+                    if k in s["kill"]:
                         reason = "  (SHAPE.*.kill 로 0 처리됨)"
                     elif kind == "max" and r is not None and r["max"] < 1e-9 and sh["mean"] < 1e-9:
                         reason = "  (엔진이 이 채널을 사실상 구동하지 않음 — raw 값 자체가 0)"
