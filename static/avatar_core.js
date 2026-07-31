@@ -202,7 +202,7 @@ window.AvatarCore = (() => {
       // 경계에서 이전 표정이 한 프레임에 사라진다(그게 바로 없애려는 팝이다).
       // 문장이 바뀌는 순간의 표정을 박제해 두고 CROSSFADE_S 동안 새 프리셋과 겹쳐 넘긴다.
       followTrack(track, tSec) {
-        if (!track || !track.length) return;
+        if (!track || !track.length || sticky) return;   // 수동 버튼이 눌렸으면 사용자 의도가 우선
         let seg = track[0];
         for (const t of track) if (tSec >= t.start) seg = t;
         if (seg !== trackSeg) { fadeFrom = emotion; fadeAt = tSec; trackSeg = seg; }
