@@ -1,5 +1,6 @@
 """감정 분류 서버측 로직 — Ollama 호출은 목으로 대체해 네트워크 의존 없이 돈다."""
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -8,10 +9,34 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import llm_source
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _js_emotion_keys() -> set[str]:
+    """static/avatar_core.js 의 EMOTIONS 객체 최상위 키 집합을 소스에서 직접 뽑는다.
+
+    문자열로 다시 적어 비교하면(예: 파이썬 튜플 리터럴) 그 문자열도 함께 바뀌어야
+    실패하므로 "고정 값과 고정 값을 비교"하는 것과 같다 — 한쪽에서만 키가 빠져도
+    테스트가 초록으로 남는다. app.py 가 static/·docs/ 사본을 sha256 으로 비교하는
+    핀 방식과 같은 취지로, 실제 JS 소스를 파싱해 진짜 파이썬 쪽과 맞대본다.
+    """
+    src = (ROOT / "static" / "avatar_core.js").read_text(encoding="utf-8")
+    m = re.search(r"const EMOTIONS = \{(.*?)\n  \};", src, re.S)
+    assert m, "avatar_core.js 의 EMOTIONS 객체를 찾지 못했습니다 — 정의부 형태가 바뀌었으면 이 정규식도 함께 고치세요."
+    # 최상위 키만: 각 감정은 "  key: { ... }," 형태로 한 줄에 있고, 값 안의 채널 이름은
+    # "key: {" 뒤에 이어 붙어 줄 시작이 아니므로 줄-시작 앵커(^)가 걸러낸다.
+    keys = set(re.findall(r"^\s*(\w+):", m.group(1), re.M))
+    assert keys, "EMOTIONS 블록에서 키를 하나도 못 뽑았습니다 — 정규식이 이 파일 서식과 안 맞습니다."
+    return keys
+
 
 def test_emotion_set_is_seven_and_matches_face_presets():
     assert llm_source.EMOTIONS == (
         "neutral", "joy", "sad", "angry", "surprise", "fear", "shy")
+    # 개수·이름이 avatar_core.js EMOTIONS 와도 실제로 일치하는지 — 한쪽에서만
+    # 키를 빼면(예: shy 삭제) classify()/followTrack 둘 다 "neutral 로 조용히 폴백"
+    # 하므로 그 감정이 그냥 안 나오는 증상으로만 드러난다. 여기서 잡는다.
+    assert set(llm_source.EMOTIONS) == _js_emotion_keys()
 
 
 def test_classify_schema_pins_array_length_to_sentence_count():
