@@ -69,6 +69,27 @@ window.AvatarCore = (() => {
     return { emo: best, intensity: Math.min(1, 0.45 + top * 0.16) };  // 0.45~1.0
   }
 
+  // ---------- LLM 감정 분류 (규칙 매칭의 상위 경로) ----------
+  // inferEmotion 정규식은 한국어 10문장 벤치에서 1/10 이었다 — 상주 LLM 에 물어본다.
+  // 실패·타임아웃·503 은 전부 null 로 접어서 호출측이 규칙으로 떨어지게 한다.
+  async function classifyEmotion(text, { timeoutMs = 4000 } = {}) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const res = await fetch("/api/emotion", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }), signal: ctl.signal,
+      });
+      if (!res.ok) return null;
+      const segs = (await res.json()).segments;
+      return Array.isArray(segs) && segs.length ? segs : null;
+    } catch {
+      return null;      // 오프라인·중단·파싱 실패 — 규칙 폴백
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ---------- 감정 → 목소리 톤 (얼굴만 웃고 목소리는 무표정한 괴리 해소) ----------
   // 비율값: rate=속도, pitch=음높이, volume=크기. edge-tts("+10%"/"+14Hz")와 브라우저 TTS(배수) 양쪽에서 사용.
   const VOICE_STYLE = {
@@ -102,6 +123,45 @@ window.AvatarCore = (() => {
     return w;
   }
 
+  // ---------- 엔진 출력 셰이핑 (발화당 1회) ----------
+  // A2F·NeuroSync 둘 다 턱을 거의 안 벌리고(jawOpen 최대 0.31~0.40 실측) 발화 내내 켜져 있는
+  // 편향 채널이 있다(A2F jawRight 평균 0.17, NeuroSync browInnerUp 0.145). 엔진 쪽에는 세기
+  // 손잡이가 없어서(A2F model.json 은 경로 설정뿐) 받은 프레임 전체를 여기서 정규화한다.
+  const SHAPE = {
+    a2f:       { gain: { jawopen: 2.3 }, kill: ["jawright", "jawleft"] },
+    // browInnerUp·browOuterUp·eyeWide 는 NeuroSync가 발화 내내 놀란 표정을 상시 띄우는
+    // 원인(상시 켜짐이 아니라 높은 값 주변에서 진동) — 게인<1로 눌러야 목표(평균<=0.05)에 닿는다.
+    // 0.35/0.25 는 채널 프로브 실측(문장1, 자음·무음 섞인 발화)에서 평균이 0.047~0.060 으로
+    // 목표(10% 마진 0.0455)에 걸쳐 있었다 — 재현 시 FAIL 이 나올 수 있는 수준이라 더 눌렀다.
+    // worst-case(brow 0.060, eyewide 0.050) 기준 0.035 목표(마진선보다 23%↓, TTS 합성 변동
+    // 여유분)로 역산: brow 0.35*(0.035/0.060)=0.204→0.20, eyewide 0.25*(0.035/0.050)=0.175→0.18.
+    // 감정 프리셋(EMOTIONS.sad/surprise/fear 의 brow*/eyewide* 값 0.6~0.85)은 applyMax 로
+    // 별도 max-결합되므로 이 게인과 무관하게 그대로 유지된다(makeEmotion.applyMax 참고).
+    neurosync: { gain: { jawopen: 2.8, mouthfunnel: 0.7, browinnerup: 0.20, browouterupleft: 0.20,
+                          browouterupright: 0.20, eyewideleft: 0.18, eyewideright: 0.18 }, kill: [] },
+  };
+  const BASELINE_PCT = 10;   // 채널별 하위 백분위 = "상시 켜져 있는" 성분
+
+  function shapeAnim(anim, engine) {
+    const prof = SHAPE[engine];
+    if (!prof || !anim || !anim.frames || !anim.frames.length || !anim.index) return anim;
+    const kill = new Set(prof.kill);
+    for (const [name, col] of anim.index) {
+      if (kill.has(name)) {
+        for (const f of anim.frames) f[col] = 0;
+        continue;
+      }
+      const vals = anim.frames.map(f => f[col]);    // 스냅샷 — 아래서 f[col] 을 덮어써도 원본값 기준으로 계산
+      const base = vals.slice().sort((a, b) => a - b)[Math.floor((vals.length - 1) * BASELINE_PCT / 100)];
+      const gain = prof.gain[name] || 1;
+      if (!base && gain === 1) continue;            // 손댈 것 없는 채널은 건너뛴다
+      anim.frames.forEach((f, i) => {
+        f[col] = Math.min(1, Math.max(0, (vals[i] - base) * gain));
+      });
+    }
+    return anim;
+  }
+
   // ---------- 감정 프리셋 (studio3d 버전이 superset 이라 그것으로 통합) ----------
   const EMOTIONS = {
     neutral: {},
@@ -114,6 +174,8 @@ window.AvatarCore = (() => {
     shy: { mouthsmileleft: 0.3, mouthsmileright: 0.3, eyelookdownleft: 0.55, eyelookdownright: 0.55, mouthpressleft: 0.25, mouthpressright: 0.25 },
   };
 
+  const CROSSFADE_S = 0.25;   // 문장 경계 표정 전환 시간
+
   // 감정 상태 + 버튼 배선. buttons/activeColor 는 페이지가 주입(2D #5b8cff / 3D #76b900).
   function makeEmotion(buttons, activeColor) {
     let emotion = EMOTIONS.neutral;
@@ -123,6 +185,7 @@ window.AvatarCore = (() => {
     // 항상 새 객체로 스케일 — 공유 EMOTIONS 프리셋 앨리어싱 회피(v*1===v 라 무손실).
     // isSticky=false(자동 발화 감정)면 발화가 끝난 뒤 표정이 얼어붙지 않고 천천히 풀린다.
     let curKey = "neutral", curInt = 1;   // 몸짓 연동용 현재 감정 (current() 로 노출)
+    let trackSeg = null, fadeFrom = {}, fadeAt = 0;   // 문장별 전환용 크로스페이드 상태
     function setEmotion(key, intensity = 1, isSticky = true) {
       const base = EMOTIONS[key] || EMOTIONS.neutral;
       emotion = {};
@@ -134,6 +197,24 @@ window.AvatarCore = (() => {
     buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });   // 버튼은 sticky 기본
     return {
       setEmotion,
+      // 발화 중 문장이 바뀌면 표정도 바뀐다. track=[{start, emo, intensity}], tSec=audio.currentTime.
+      // setEmotion 을 쓰지 않고 직접 섞는 이유: setEmotion 은 새 프리셋으로 통째 교체라
+      // 경계에서 이전 표정이 한 프레임에 사라진다(그게 바로 없애려는 팝이다).
+      // 문장이 바뀌는 순간의 표정을 박제해 두고 CROSSFADE_S 동안 새 프리셋과 겹쳐 넘긴다.
+      followTrack(track, tSec) {
+        if (!track || !track.length || sticky) return;   // 수동 버튼이 눌렸으면 사용자 의도가 우선
+        let seg = track[0];
+        for (const t of track) if (tSec >= t.start) seg = t;
+        if (seg !== trackSeg) { fadeFrom = emotion; fadeAt = tSec; trackSeg = seg; }
+        const k = Math.min(1, Math.max(0, (tSec - fadeAt) / CROSSFADE_S));
+        const base = EMOTIONS[seg.emo] || EMOTIONS.neutral;
+        const blended = {};
+        for (const key in fadeFrom) blended[key] = fadeFrom[key] * (1 - k);
+        for (const key in base) blended[key] = (blended[key] || 0) + base[key] * seg.intensity * k;
+        emotion = blended;
+        sticky = false; hold = 1;      // 발화 중 유지, 끝나면 기존대로 감쇠
+        curKey = seg.emo; curInt = seg.intensity;
+      },
       // 감정 프리셋을 현재 평활값에 max-결합. speaking=발화 중이면 유지, 자동 감정은 유휴 시 ~1.5s 감쇠.
       applyMax(smooth, speaking) {
         hold = (sticky || speaking) ? 1 : hold * 0.98;
@@ -501,6 +582,8 @@ window.AvatarCore = (() => {
   async function speakFlow({ text, voice, engine, audioEl, onAnim, prosody }) {
     const r = await speakRT({ text, voice, engine, prosody });
     const anim = { fps: r.fps, frames: r.frames, head: r.head, index: r.names.map((n, i) => [norm(n), i]) };
+    shapeAnim(anim, engine);          // 엔진 출력 정규화 (입 벌림·편향 제거)
+    anim.sentences = r.sentences;     // 문장 시작 시각 (없을 수 있음)
     if (onAnim) onAnim(anim);
     audioEl.src = r.audio_url;
     await audioEl.play();
@@ -508,16 +591,30 @@ window.AvatarCore = (() => {
   }
 
   // ---------- 감정 결정 + 발화 (puppet·studio3d 공용) ----------
-  // emotion 지정(LLM 판단) 있으면 그대로, 없으면 텍스트에서 추론. autoEmo(호출 시점 boolean) 켜져 있으면
+  // emotion 지정(LLM 판단) 있으면 그대로, 없으면 LLM 분류 → 실패 시 규칙 추론. autoEmo(호출 시점 boolean) 켜져 있으면
   // emo(makeEmotion 인스턴스) 프리셋 + 목소리 톤 적용 후 speakFlow. voice/engine 은 호출 시점 값.
   async function speakWithEmotion({ text, emotion, autoEmo, emo, voice, engine, audioEl, onAnim }) {
-    const r = emotion ? { emo: emotion, intensity: 0.9 } : inferEmotion(text);
+    let segs = null;
+    let r = emotion ? { emo: emotion, intensity: 0.9 } : null;
+    if (!r && autoEmo) {
+      // 직렬 호출: 목소리 톤(prosody)이 TTS 요청 파라미터라 감정을 먼저 알아야 한다.
+      segs = await classifyEmotion(text);
+      r = segs ? { emo: segs[0].emo, intensity: segs[0].intensity } : inferEmotion(text);
+    } else if (!r) {
+      r = inferEmotion(text);
+    }
     let prosody = null;
     if (r && autoEmo) {
       emo.setEmotion(r.emo, r.intensity, false);   // 자동 감정 — 발화 끝나면 중립 복귀
       prosody = voiceProsody(r.emo, r.intensity);
     }
-    return speakFlow({ text, voice, engine, audioEl, onAnim, prosody });
+    const anim = await speakFlow({ text, voice, engine, audioEl, onAnim, prosody });
+    // 문장별 감정 전환은 두 배열의 길이가 맞을 때만 (분할 결과가 같다는 전제 확인)
+    if (segs && anim.sentences && anim.sentences.length === segs.length) {
+      anim.emotionTrack = anim.sentences.map((s, i) => ({
+        start: s.start, emo: segs[i].emo, intensity: segs[i].intensity }));
+    }
+    return anim;
   }
 
   // ---------- 자동 쇼케이스 (첫 방문자 유휴 시 인사·감정 시연) ----------
@@ -1111,7 +1208,7 @@ window.AvatarCore = (() => {
   }
 
   return {
-    norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
+    norm, inferEmotion, classifyEmotion, voiceProsody, smoothStep, weightsFromAnim, shapeAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
