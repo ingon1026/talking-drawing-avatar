@@ -254,6 +254,22 @@ def speak_rt(req: SpeakRtReq):
             raise HTTPException(500, str(e))
 
 
+def _llm():
+    """llm_source 지연 임포트(모듈·모델은 첫 사용 때 로드) — 없으면 원인을 구분해 503.
+
+    ModuleNotFoundError.name 이 "llm_source" 여야 모듈 자체가 없는 것이다. requests 같은
+    전이 의존성이 빠진 경우는 이름이 다르게 잡히므로, 같은 메시지로 뭉개면 "llm_source.py
+    없음"이라고 오보하게 된다 — /api/chat 만 이 구분을 하고 /api/emotion 은 놓쳤었다.
+    """
+    try:
+        import llm_source
+        return llm_source
+    except ModuleNotFoundError as e:
+        if e.name == "llm_source":
+            raise HTTPException(503, "llm_source.py 가 없습니다.")
+        raise HTTPException(503, f"llm_source 의존성 누락: {e}")   # requests 등
+
+
 class ChatReq(BaseModel):
     text: str
     history: list[dict] = []   # [{"role": "user"|"assistant", "content": str}, ...] 최근 턴
@@ -265,12 +281,7 @@ def chat(req: ChatReq):
     """사용자 발화 → LLM 응답 {reply, emotion}. 발화(speak_rt)는 클라이언트가 이어서 호출."""
     if not req.text.strip():
         raise HTTPException(400, "빈 입력입니다.")
-    try:
-        import llm_source  # lazy: 모듈·모델은 첫 대화 때 로드
-    except ModuleNotFoundError as e:
-        if e.name == "llm_source":
-            raise HTTPException(503, "대화 기능이 아직 설치되지 않았습니다 (llm_source.py 없음).")
-        raise HTTPException(503, f"대화 모듈 의존성 누락: {e}")   # requests 등
+    llm_source = _llm()
     # llm_source.chat 은 사용자용 한국어 메시지를 담아 RuntimeError 로 던진다 → 그대로 503 전달.
     # 그 외 예외(진짜 버그)는 삼키지 않고 500 으로 propagate.
     try:
@@ -288,10 +299,7 @@ def emotion(req: EmotionReq):
     """텍스트 → 문장별 감정. 실패는 503 — 클라이언트가 규칙 폴백으로 조용히 진행한다."""
     if not req.text.strip():
         raise HTTPException(400, "빈 입력입니다.")
-    try:
-        import llm_source
-    except ModuleNotFoundError:
-        raise HTTPException(503, "감정 분류를 쓸 수 없습니다 (llm_source.py 없음).")
+    llm_source = _llm()
     sentences = llm_source.split_sentences(req.text)
     if not sentences:
         raise HTTPException(400, "문장을 찾지 못했습니다.")
