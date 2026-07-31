@@ -214,13 +214,7 @@ def audio_to_blendshapes(wav_path: str) -> dict:
         if target in col:
             frames[:, j] = arr[:, col[target]]
     frames = np.clip(frames, 0.0, 1.0)
-    # PREDICTION_DELAY_S: 과거 A2F 버전에서 출력이 오디오보다 ~0.4s 늦다고 관측되어
-    # 앞부분을 잘라 보정했었다. 2026-07-31 라이브 서버 측정(버스트 문장 교차상관,
-    # corr 0.93)으로 재확인한 결과 현재 A2F 출력은 이미 오디오와 정렬돼 있고
-    # 저 트림이 오히려 +400ms(=0.4s*60fps=24프레임) 조기 재생을 유발하는 원인이었다.
-    # 값을 0으로 되돌려 두되, 향후 A2F/모델 교체 시 재측정해서 채울 수 있게 상수로 남긴다.
-    PREDICTION_DELAY_S = 0.0
-    frames = frames[int(PREDICTION_DELAY_S * float(fps)):]
+    # A2F 출력은 오디오와 정렬돼 있다(2026-07-31 교차상관 0.93). 과거의 0.4s 트림이 +400ms 조기 재생의 원인이라 제거했다.
 
     return {
         "fps": float(fps),
