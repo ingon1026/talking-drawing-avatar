@@ -174,6 +174,8 @@ window.AvatarCore = (() => {
     shy: { mouthsmileleft: 0.3, mouthsmileright: 0.3, eyelookdownleft: 0.55, eyelookdownright: 0.55, mouthpressleft: 0.25, mouthpressright: 0.25 },
   };
 
+  const CROSSFADE_S = 0.25;   // 문장 경계 표정 전환 시간
+
   // 감정 상태 + 버튼 배선. buttons/activeColor 는 페이지가 주입(2D #5b8cff / 3D #76b900).
   function makeEmotion(buttons, activeColor) {
     let emotion = EMOTIONS.neutral;
@@ -183,6 +185,7 @@ window.AvatarCore = (() => {
     // 항상 새 객체로 스케일 — 공유 EMOTIONS 프리셋 앨리어싱 회피(v*1===v 라 무손실).
     // isSticky=false(자동 발화 감정)면 발화가 끝난 뒤 표정이 얼어붙지 않고 천천히 풀린다.
     let curKey = "neutral", curInt = 1;   // 몸짓 연동용 현재 감정 (current() 로 노출)
+    let trackSeg = null, fadeFrom = {}, fadeAt = 0;   // 문장별 전환용 크로스페이드 상태
     function setEmotion(key, intensity = 1, isSticky = true) {
       const base = EMOTIONS[key] || EMOTIONS.neutral;
       emotion = {};
@@ -194,6 +197,24 @@ window.AvatarCore = (() => {
     buttons.forEach(b => { b.onclick = () => setEmotion(b.dataset.emo); });   // 버튼은 sticky 기본
     return {
       setEmotion,
+      // 발화 중 문장이 바뀌면 표정도 바뀐다. track=[{start, emo, intensity}], tSec=audio.currentTime.
+      // setEmotion 을 쓰지 않고 직접 섞는 이유: setEmotion 은 새 프리셋으로 통째 교체라
+      // 경계에서 이전 표정이 한 프레임에 사라진다(그게 바로 없애려는 팝이다).
+      // 문장이 바뀌는 순간의 표정을 박제해 두고 CROSSFADE_S 동안 새 프리셋과 겹쳐 넘긴다.
+      followTrack(track, tSec) {
+        if (!track || !track.length) return;
+        let seg = track[0];
+        for (const t of track) if (tSec >= t.start) seg = t;
+        if (seg !== trackSeg) { fadeFrom = emotion; fadeAt = tSec; trackSeg = seg; }
+        const k = Math.min(1, Math.max(0, (tSec - fadeAt) / CROSSFADE_S));
+        const base = EMOTIONS[seg.emo] || EMOTIONS.neutral;
+        const blended = {};
+        for (const key in fadeFrom) blended[key] = fadeFrom[key] * (1 - k);
+        for (const key in base) blended[key] = (blended[key] || 0) + base[key] * seg.intensity * k;
+        emotion = blended;
+        sticky = false; hold = 1;      // 발화 중 유지, 끝나면 기존대로 감쇠
+        curKey = seg.emo; curInt = seg.intensity;
+      },
       // 감정 프리셋을 현재 평활값에 max-결합. speaking=발화 중이면 유지, 자동 감정은 유휴 시 ~1.5s 감쇠.
       applyMax(smooth, speaking) {
         hold = (sticky || speaking) ? 1 : hold * 0.98;

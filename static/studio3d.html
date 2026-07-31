@@ -216,6 +216,7 @@ function render(now) {
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k of ["browinnerup", "browouterupleft", "browouterupright"]) smooth[k] = Math.max(smooth[k] || 0, browOv);
+  if (anim && anim.emotionTrack && !audio.paused && !audio.ended) emo.followTrack(anim.emotionTrack, audio.currentTime);
   emo.applyMax(smooth, !!(anim && !audio.paused && !audio.ended));   // 발화 중이면 감정 유지, 유휴면 자동 감정 감쇠
   const blink = Math.max(blinker.value(now), +$("ovBlink").value, W("eyeblinkleft"), W("eyeblinkright"));
 
