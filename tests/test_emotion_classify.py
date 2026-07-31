@@ -116,8 +116,11 @@ def test_classify_rejects_non_dict_element(monkeypatch):
 
 
 def test_classify_rejects_non_ok_http_status(monkeypatch):
-    _mock_ollama(monkeypatch, {"emotions": []}, status_code=500)
-    with pytest.raises(RuntimeError):
+    # 페이로드를 문장 수와 정확히 맞춰서, 개수 불일치 검사가 아니라 상태 코드 분기
+    # 만이 실패 원인이 되게 한다 — 그래야 이 테스트가 실제로 `if not r.ok:` 를 덮는다.
+    _mock_ollama(monkeypatch, {"emotions": [{"emotion": "joy", "intensity": "mid"}]},
+                 status_code=500)
+    with pytest.raises(RuntimeError, match=r"\(Ollama 500\)"):
         llm_source.classify(["문장 하나입니다."])
 
 
