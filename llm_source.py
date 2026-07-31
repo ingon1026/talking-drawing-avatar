@@ -275,7 +275,14 @@ def classify(sentences: list[str]) -> list[dict]:
 
 @lru_cache(maxsize=64)
 def classify_cached(sentences: tuple[str, ...]) -> tuple[dict, ...]:
-    """같은 문장 묶음 재요청은 모델을 다시 부르지 않는다 (쇼케이스·반복 시연)."""
+    """같은 문장 묶음 재요청은 모델을 다시 부르지 않는다.
+
+    유일한 도달 경로: /api/emotion ← puppet.html 의 비-대화 모드 직접 텍스트 입력.
+    대화 모드는 chat() 이 고른 emotion 을 그대로 쓰고, 캐릭터 클릭 반응은
+    pickReaction() 의 감정을 쓰므로 둘 다 이 경로를 타지 않는다. docs/index.html
+    (쇼케이스)은 speechSynthesis 를 쓰고 /api/emotion 을 호출하지 않으므로 여기
+    걸리지 않는다 — 예전 "쇼케이스·반복 시연"이라는 근거는 틀렸었다.
+    """
     return tuple(classify(list(sentences)))
 
 
