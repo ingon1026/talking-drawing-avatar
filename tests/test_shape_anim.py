@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+from conftest import ROOT
+
 CORE = ROOT / "static" / "avatar_core.js"
 CHROME = Path("/home/ingon/.cache/ms-playwright/chromium_headless_shell-1234"
               "/chrome-headless-shell-linux64/chrome-headless-shell")

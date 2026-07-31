@@ -1,11 +1,7 @@
 """/api/emotion — FastAPI 핸들러를 직접 호출한다(TestClient 의존성 추가 회피)."""
-import sys
-from pathlib import Path
-
 import pytest
 from fastapi import HTTPException
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app as appmod
 import llm_source
 

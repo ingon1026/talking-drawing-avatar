@@ -1,15 +1,11 @@
 """감정 분류 서버측 로직 — Ollama 호출은 목으로 대체해 네트워크 의존 없이 돈다."""
 import json
 import re
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import llm_source
-
-ROOT = Path(__file__).resolve().parents[1]
+from conftest import ROOT
 
 
 def _js_emotion_keys() -> set[str]:
