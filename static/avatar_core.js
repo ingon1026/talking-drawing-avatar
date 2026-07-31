@@ -131,8 +131,14 @@ window.AvatarCore = (() => {
     a2f:       { gain: { jawopen: 2.3 }, kill: ["jawright", "jawleft"] },
     // browInnerUp·browOuterUp·eyeWide 는 NeuroSync가 발화 내내 놀란 표정을 상시 띄우는
     // 원인(상시 켜짐이 아니라 높은 값 주변에서 진동) — 게인<1로 눌러야 목표(평균<=0.05)에 닿는다.
-    neurosync: { gain: { jawopen: 2.8, mouthfunnel: 0.7, browinnerup: 0.35, browouterupleft: 0.35,
-                          browouterupright: 0.35, eyewideleft: 0.25, eyewideright: 0.25 }, kill: [] },
+    // 0.35/0.25 는 채널 프로브 실측(문장1, 자음·무음 섞인 발화)에서 평균이 0.047~0.060 으로
+    // 목표(10% 마진 0.0455)에 걸쳐 있었다 — 재현 시 FAIL 이 나올 수 있는 수준이라 더 눌렀다.
+    // worst-case(brow 0.060, eyewide 0.050) 기준 0.035 목표(마진선보다 23%↓, TTS 합성 변동
+    // 여유분)로 역산: brow 0.35*(0.035/0.060)=0.204→0.20, eyewide 0.25*(0.035/0.050)=0.175→0.18.
+    // 감정 프리셋(EMOTIONS.sad/surprise/fear 의 brow*/eyewide* 값 0.6~0.85)은 applyMax 로
+    // 별도 max-결합되므로 이 게인과 무관하게 그대로 유지된다(makeEmotion.applyMax 참고).
+    neurosync: { gain: { jawopen: 2.8, mouthfunnel: 0.7, browinnerup: 0.20, browouterupleft: 0.20,
+                          browouterupright: 0.20, eyewideleft: 0.18, eyewideright: 0.18 }, kill: [] },
   };
   const BASELINE_PCT = 10;   // 채널별 하위 백분위 = "상시 켜져 있는" 성분
 
