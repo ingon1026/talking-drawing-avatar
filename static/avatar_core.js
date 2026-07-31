@@ -14,6 +14,7 @@ window.AvatarCore = (() => {
 
   // ---------- 내부 유틸 ----------
   const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
+  const clamp01 = v => Math.min(1, Math.max(0, v));                         // 0~1 로 자르기
   const avgLR = (W, base) => (W(base + "left") + W(base + "right")) / 2;   // 좌우 채널 평균
   const roundness = W => Math.max(W("mouthpucker"), W("mouthfunnel"));       // 오므림 세기
   const WARP_JAW_G = Math.exp(-(38 * 38) / (2 * 55 * 55));                   // jaw 변위장을 입 앵커(38px 위)에서 평가한 가우시안 (시그마 55 = 워프 셰이더와 동일)
@@ -160,7 +161,7 @@ window.AvatarCore = (() => {
       const gain = prof.gain[name] || 1;
       if (!base && gain === 1) continue;            // 손댈 것 없는 채널은 건너뛴다
       anim.frames.forEach((f, i) => {
-        f[col] = Math.min(1, Math.max(0, (vals[i] - base) * gain));
+        f[col] = clamp01((vals[i] - base) * gain);
       });
     }
     return anim;
@@ -213,7 +214,7 @@ window.AvatarCore = (() => {
         // fadeAt=seg.start: 경계에서 tSec≈seg.start(위 루프가 tSec>=seg.start 인 세그를 고르므로)이고,
         // 첫 호출은 speakWithEmotion 이 이미 세그 0 프리셋을 적용해둔 뒤라 k=1 이 곧바로 맞다.
         // 별도 변수로 관측 시각을 박제하지 않으므로 일시정지 후에도 페이드가 어긋나지 않는다.
-        const k = Math.min(1, Math.max(0, (tSec - seg.start) / CROSSFADE_S));
+        const k = clamp01((tSec - seg.start) / CROSSFADE_S);
         const base = EMOTIONS[seg.emo] || EMOTIONS.neutral;
         const blended = {};
         for (const key in fadeFrom) blended[key] = fadeFrom[key] * (1 - k);
@@ -991,7 +992,7 @@ window.AvatarCore = (() => {
       for (const k in raw) {
         if (k === "_neutral") continue;
         const n = st.neutral[k] || 0;
-        const cal = Math.min(1, Math.max(0, (raw[k] - n) / Math.max(0.2, 1 - n)) * (gain[k] || 1));
+        const cal = clamp01((raw[k] - n) / Math.max(0.2, 1 - n) * (gain[k] || 1));
         w[k] = 0.55 * (w[k] || 0) + 0.45 * cal;   // EMA 평활
       }
       st.w = w;
