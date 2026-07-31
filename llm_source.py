@@ -201,12 +201,20 @@ def classify(sentences: list[str]) -> list[dict]:
         raise RuntimeError("대화 서버(Ollama)가 꺼져 있어요.")
     except requests.exceptions.Timeout:
         raise RuntimeError("감정 분류가 너무 늦어요.")
+    except requests.exceptions.RequestException:
+        # 위 두 예외의 상위 클래스 — 반드시 이 자리(마지막)에 둔다. 이 GPU 는 Ollama·
+        # NeuroSync·A2F-3D 가 12GB VRAM 을 나눠 쓰므로 Ollama 가 응답 도중 OOM-kill
+        # 되면 ConnectionError 가 아니라 ChunkedEncodingError 같은 형태로 나온다.
+        raise RuntimeError("감정 분류 요청이 실패했어요.")
     if not r.ok:
         raise RuntimeError(f"감정 분류에 실패했어요. (Ollama {r.status_code})")
 
     try:
-        arr = json.loads(r.json().get("message", {}).get("content", "")).get("emotions", [])
-    except (json.JSONDecodeError, AttributeError):
+        content = r.json().get("message", {}).get("content", "")
+        if not isinstance(content, str):
+            raise TypeError
+        arr = json.loads(content).get("emotions", [])
+    except (json.JSONDecodeError, AttributeError, TypeError):
         raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
     # 스키마를 걸어도 형태를 방어한다 — 배열이 아니거나 원소가 객체가 아니면
     # 아래 len()/e.get() 이 RuntimeError 밖에서 TypeError/AttributeError 로 터진다.
