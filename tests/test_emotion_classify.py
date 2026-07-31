@@ -14,6 +14,14 @@ def test_emotion_set_is_seven_and_matches_face_presets():
         "neutral", "joy", "sad", "angry", "surprise", "fear", "shy")
 
 
+def test_classify_schema_pins_array_length_to_sentence_count():
+    # minItems/maxItems 가 문장 수와 정확히 같아야 Ollama(GBNF)가 개수를 강제한다 —
+    # 실측(라이브 Ollama)으로 확인된 문법 제약을 회귀로부터 지키는 순수 유닛 테스트.
+    schema = llm_source._classify_schema(5)
+    emotions = schema["properties"]["emotions"]
+    assert emotions["minItems"] == emotions["maxItems"] == 5
+
+
 def test_split_sentences_basic():
     assert llm_source.split_sentences("오늘 정말 힘들었어요. 그래도 끝나서 다행이에요!") == [
         "오늘 정말 힘들었어요.", "그래도 끝나서 다행이에요!"]

@@ -35,9 +35,11 @@ EMOTIONS = ("neutral", "joy", "sad", "angry", "surprise", "fear", "shy")
 
 _SPLIT = re.compile(r"(?<=[.!?…])\s+")
 MIN_SENTENCE_CHARS = 10   # 이보다 짧은 조각은 앞 문장에 붙인다 ("네." 같은 맞장구)
-# 실측(2026-07-31): 8문장은 모델이 9개 라벨을 내놓는 실패가 결정적으로 재현됐다
-# (done_reason=stop, 같은 세트로 재시도해도 동일) — MAX_SENTENCES=8 이 매 긴 발화를
-# 정확히 그 실패 지점으로 밀어넣고 있었다. 6문장까지는 안정적이라 상한을 낮춘다.
+# 실측(2026-07-31): 8문장에서 모델이 9개 라벨을 내놓는 실패가 나왔다(done_reason=stop).
+# 개수 자체는 이후 _classify_schema() 의 minItems/maxItems 문법 제약으로 따로 막았지만
+# (실측 87/87, 8문장·병합-테일 조합 포함 — 개수 불일치가 재현되지 않음), 상한은 그대로
+# 6으로 둔다: 지연이 문장 수에 비례해 늘어서(6=~1.3s, 8=~2.0s) 개수 정확성과 무관하게
+# 상한이 지연 예산을 지키는 독립적인 이유가 된다.
 MAX_SENTENCES = 6         # LLM 출력 길이를 묶어 지연을 예측 가능하게 한다
 
 
@@ -158,18 +160,33 @@ def chat(text: str, history: list[dict] | None = None, persona: str | None = Non
 
 INTENSITY = {"low": 0.45, "mid": 0.70, "high": 1.0}
 
-CLASSIFY_SCHEMA = {
-    "type": "object",
-    "properties": {"emotions": {"type": "array", "items": {
+def _classify_schema(n: int) -> dict:
+    """감정 배열 길이를 n 개로 고정한 스키마.
+
+    Ollama(llama.cpp GBNF)는 JSON Schema 의 minItems/maxItems 를 문법 제약으로
+    변환해 강제한다 — 이 값을 문장 수(n)와 같게 주면 모델이 구조적으로 다른
+    개수를 낼 수 없다. 실측(exaone3.5:2.4b, Ollama 0.17.6)으로 확인: 이전에
+    minItems/maxItems 없이 4/8(50%)까지 깨지던 병합-다중문장 조합이 12/12,
+    클린 8문장이 6/6 으로 전부 정확한 개수를 냈다 — 이 빌드는 두 키워드를
+    실제로 문법에 반영한다.
+    """
+    return {
         "type": "object",
-        "properties": {
-            "emotion": {"type": "string", "enum": list(EMOTIONS)},
-            "intensity": {"type": "string", "enum": list(INTENSITY)},
-        },
-        "required": ["emotion", "intensity"],
-    }}},
-    "required": ["emotions"],
-}
+        "properties": {"emotions": {
+            "type": "array",
+            "minItems": n,
+            "maxItems": n,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "emotion": {"type": "string", "enum": list(EMOTIONS)},
+                    "intensity": {"type": "string", "enum": list(INTENSITY)},
+                },
+                "required": ["emotion", "intensity"],
+            },
+        }},
+        "required": ["emotions"],
+    }
 
 CLASSIFY_SYSTEM = (
     "너는 문장의 감정을 분류한다.\n"
@@ -198,9 +215,13 @@ CLASSIFY_SYSTEM = (
 class _LengthMismatch(RuntimeError):
     """결과 개수가 문장 수와 다름 — classify() 에서 한 번 재요청할 대상.
 
-    실측상 컨텍스트 잘림이 아니라 모델이 가끔 문장 하나를 더/덜 세는 실수였다
-    (done_reason=stop, tools/emotion_bench.py 참고). 다른 RuntimeError(연결 끊김,
-    파싱 실패 등)는 재시도로 못 고치는 실패라 구분해서 이 경우만 재시도한다.
+    _classify_schema() 의 minItems/maxItems 문법 제약이 들어간 뒤로는 실측
+    87/87(클린 8문장·병합-다중문장 조합 포함)에서 이 경로가 한 번도 안 걸렸다 —
+    즉 정상 경로에서는 이제 거의 안 일어난다. 그래도 값싼 보험으로 남긴다: 다른
+    Ollama 버전/모델이 이 키워드를 무시할 수도 있고, 스키마 자체는 지켜도 파싱
+    전 단계에서 드물게 어긋나는 경우까지 배제할 근거는 없다. 다른 RuntimeError
+    (연결 끊김, 파싱 실패 등)는 재시도로 못 고치는 실패라 구분해서 이 경우만
+    재시도한다.
     """
 
 
@@ -215,7 +236,7 @@ def _classify_once(sentences: list[str]) -> list:
                 "messages": [{"role": "system", "content": CLASSIFY_SYSTEM},
                              {"role": "user", "content": numbered}],
                 "stream": False,
-                "format": CLASSIFY_SCHEMA,
+                "format": _classify_schema(len(sentences)),
                 "keep_alive": KEEP_ALIVE,
                 # temperature 를 낮게: 분류는 창작이 아니다. num_predict 는 문장당 ~20토큰.
                 "options": {"num_ctx": NUM_CTX, "temperature": 0.2,
