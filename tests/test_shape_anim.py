@@ -44,7 +44,7 @@ def test_removes_constant_bias(page):
 
 
 def test_amplifies_jaw_open(page):
-    # 베이스라인 0, 최대 0.31 → 게인 2.4 → 0.744
+    # 베이스라인 0, 최대 0.31 → 게인 2.8(Task 5 채널 프로브 재측정 후 상향) → 0.868
     # 별칭(aliasing) 의도적: [[0.0]] * 18 은 파이썬에서 동일 리스트 객체를 18번 참조하고,
     # playwright 는 이 객체 identity 를 JS 로 넘길 때도 보존한다(구조적 복제). 그 결과
     # shapeAnim 이 (스냅샷 없이) f[col] 을 제자리에서 읽고 쓰면 마지막 프레임 값이 두 번
@@ -52,7 +52,7 @@ def test_amplifies_jaw_open(page):
     # 컴프리헨션으로 "고쳐서" 별칭을 없애면 안 된다.
     frames = [[0.0]] * 18 + [[0.31]] * 2
     out = _run(page, frames, [["jawopen", 0]], "neurosync")
-    assert max(f[0] for f in out) == pytest.approx(0.744, abs=0.01)
+    assert max(f[0] for f in out) == pytest.approx(0.868, abs=0.01)
 
 
 def test_preserves_per_frame_order(page):
@@ -65,7 +65,7 @@ def test_preserves_per_frame_order(page):
            0.60, 0.30, 0.95, 0.15, 0.70, 0.40, 0.80, 0.25, 0.50, 0.45]
     frames = [[v] for v in raw]  # 서로 다른 리스트 객체(별칭 아님) — 순서 보존이 검증 대상
     out = _run(page, frames, [["jawopen", 0]], "a2f")
-    base, gain = 0.05, 1.9  # base = 오름차순 10번째 백분위(=두 번째로 작은 값 0.05), gain = SHAPE.a2f.gain.jawopen
+    base, gain = 0.05, 2.3  # base = 오름차순 10번째 백분위(=두 번째로 작은 값 0.05), gain = SHAPE.a2f.gain.jawopen(Task 5 재측정 후 상향)
     expected = [min(1.0, max(0.0, (v - base) * gain)) for v in raw]
     assert [f[0] for f in out] == pytest.approx(expected, abs=1e-3)
 

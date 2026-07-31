@@ -107,8 +107,11 @@ window.AvatarCore = (() => {
   // 편향 채널이 있다(A2F jawRight 평균 0.17, NeuroSync browInnerUp 0.145). 엔진 쪽에는 세기
   // 손잡이가 없어서(A2F model.json 은 경로 설정뿐) 받은 프레임 전체를 여기서 정규화한다.
   const SHAPE = {
-    a2f:       { gain: { jawopen: 1.9 }, kill: ["jawright", "jawleft"] },
-    neurosync: { gain: { jawopen: 2.4, mouthfunnel: 0.7 }, kill: [] },
+    a2f:       { gain: { jawopen: 2.3 }, kill: ["jawright", "jawleft"] },
+    // browInnerUp·browOuterUp·eyeWide 는 NeuroSync가 발화 내내 놀란 표정을 상시 띄우는
+    // 원인(상시 켜짐이 아니라 높은 값 주변에서 진동) — 게인<1로 눌러야 목표(평균<=0.05)에 닿는다.
+    neurosync: { gain: { jawopen: 2.8, mouthfunnel: 0.7, browinnerup: 0.35, browouterupleft: 0.35,
+                          browouterupright: 0.35, eyewideleft: 0.25, eyewideright: 0.25 }, kill: [] },
   };
   const BASELINE_PCT = 10;   // 채널별 하위 백분위 = "상시 켜져 있는" 성분
 

@@ -2,19 +2,20 @@
 
     PYTHONPATH= .venv/bin/python tools/channel_probe.py
 
-서버가 http://127.0.0.1:8000 에 떠 있어야 한다. 수용 기준(jawOpen >= 0.7,
-jawRight 평균 <= 0.02, browInnerUp 평균 <= 0.05) 확인용.
+서버가 http://127.0.0.1:8000 에 떠 있어야 한다.
 
-p10(하위 10백분위)도 함께 출력한다. shapeAnim 의 게인은 (peak - p10) * gain
-으로 적용되므로, 각 엔진의 jawopen p10 이 얼마나 낮아야 0.7 목표를 넘는지
-바로 검증할 수 있다.
+두 문장(모음·무음 분포가 다름)에 대해 매 엔진의 anim.frames 원본을 캡처하고,
+그 자리에서 실제 AvatarCore.shapeAnim(운영 코드 그대로)을 돌려 채널별 shaped
+결과를 얻는다 — (peak-p10)*gain 을 손으로 재계산하지 않고, 셰이핑이 실제로
+적용될 코드 경로를 그대로 태워서 검증한다.
 
-p10/max/mean 은 두 모집단에서 각각 구해 나란히 출력한다:
-  - "렌더" 열: smoothStep 을 가로채 렌더 루프가 실제로 적용한 프레임(오디오 재생 중,
-    rAF 로 샘플링됨) — 화면에 보이는 값.
-  - "anim" 열: weightsFromAnim 을 가로채 anim.frames 원본 전체 — shapeAnim(Task 7 예정)
-    이 base(p10)를 계산할 때 쓰는 실제 모집단. 재생 중 rAF 샘플과 달리 무음 패딩·재생
-    전후 프레임까지 포함되어 p10 이 더 낮게 나올 수 있다.
+수용 기준(전부 10% 마진 포함해 판정 — 예: >=0.7 기준은 실측이 0.77 이상이어야
+"마진 있음"):
+  - a2f      jawopen 최댓값 >= 0.7
+  - a2f      jawright/jawleft 평균 <= 0.02 (SHAPE.a2f.kill 로 0 처리됨 — 이유를 함께 표기)
+  - neurosync jawopen 최댓값 >= 0.7
+  - neurosync browinnerup/browouterupleft/browouterupright/eyewideleft/eyewideright
+    평균 <= 0.05 ("상시 놀란 표정" 결함 — browInnerUp 만이 아니라 눈썹·눈 전체가 대상)
 """
 import asyncio
 from pathlib import Path
@@ -23,13 +24,37 @@ from playwright.async_api import async_playwright
 
 CHROME = Path("/home/ingon/.cache/ms-playwright/chromium_headless_shell-1234"
               "/chrome-headless-shell-linux64/chrome-headless-shell")
-TEXT = "안녕하세요. 오늘 날씨가 정말 좋네요. 같이 산책이라도 갈까요?"
-WATCH = ("jawopen", "jawright", "jawleft", "mouthfunnel", "browinnerup")
-# static/avatar_core.js SHAPE 의 jawopen 게인과 동일 — (peak - p10) * gain 검산용
-GAIN = {"a2f": 1.9, "neurosync": 2.4}
+# 문장 1: 원래 발화(자음·무음 섞임). 문장 2: 개모음 위주·무음 적음 — 다른 모음/무음
+# 분포에서도 게인이 유효한지 교차 확인한다.
+TEXTS = {
+    "s1": "안녕하세요. 오늘 날씨가 정말 좋네요. 같이 산책이라도 갈까요?",
+    "s2": "아, 오늘 하루 정말 길었어요. 아아, 배고파요.",
+}
+WATCH = ("jawopen", "jawright", "jawleft", "mouthfunnel",
+         "browinnerup", "browouterupleft", "browouterupright",
+         "eyewideleft", "eyewideright")
+# mouthfunnel 은 참고용으로만 출력한다 — SHAPE.neurosync.gain 에 게인은 있지만
+# 계획서에 수용 기준(target)이 정의되어 있지 않아 TARGETS 에는 넣지 않는다.
+# (channel: (kind, target)) — kind="min"은 shaped 최댓값이 target 이상, "max"는 shaped
+# 평균이 target 이하여야 통과. static/avatar_core.js 의 SHAPE 값을 바꿔도 이 표는 그대로
+# 두고, 실제 shapeAnim 출력을 다시 돌려 재검증한다.
+TARGETS = {
+    "jawopen": ("min", 0.7),
+    "jawright": ("max", 0.02),
+    "jawleft": ("max", 0.02),
+    "browinnerup": ("max", 0.05),
+    "browouterupleft": ("max", 0.05),
+    "browouterupright": ("max", 0.05),
+    "eyewideleft": ("max", 0.05),
+    "eyewideright": ("max", 0.05),
+}
+MARGIN = 1.10  # min 기준은 target*1.10 이상, max 기준은 target/1.10 이하여야 "마진 있음"
+# static/avatar_core.js SHAPE.*.kill 과 동일 — 값이 0이라고 kill 로 단정하지 않고
+# 실제 kill 목록에 있는 채널만 그 이유를 표기한다(엔진이 애초에 안 쓰는 채널과 구분).
+KILL = {"a2f": {"jawright", "jawleft"}, "neurosync": set()}
 
 
-async def probe(engine: str) -> dict:
+async def probe(engine: str, text: str) -> dict:
     async with async_playwright() as p:
         kw = {"executable_path": str(CHROME)} if CHROME.exists() else {}
         browser = await p.chromium.launch(
@@ -39,70 +64,80 @@ async def probe(engine: str) -> dict:
         await page.wait_for_function(
             "!document.getElementById('status').textContent.includes('로딩')", timeout=90000)
         await page.select_option("#engine", engine)
-        # 렌더 루프가 매 프레임 넘기는 가중치(rAF 재생 중 샘플)와, shapeAnim 이 실제로 볼
-        # anim.frames 원본(전체 프레임, base=p10 계산 모집단)을 둘 다 가로챈다
+        # anim.frames 원본(shapeAnim 이 base=p10 을 계산하는 실제 모집단)을 가로챈다
         await page.evaluate("""() => {
-          window.__w = [];
-          const origStep = AvatarCore.smoothStep;
-          AvatarCore.smoothStep = (s, w) => { if (w) window.__w.push(w); return origStep(s, w); };
-          const origAnim = AvatarCore.weightsFromAnim;
-          AvatarCore.weightsFromAnim = (a, au) => { if (a && a.frames) window.__anim = a; return origAnim(a, au); };
+          const orig = AvatarCore.weightsFromAnim;
+          AvatarCore.weightsFromAnim = (a, au) => { if (a && a.frames) window.__anim = a; return orig(a, au); };
         }""")
-        await page.fill("#text", TEXT)
+        await page.fill("#text", text)
         await page.click("#send")
         await page.wait_for_function(
             "() => { const a = document.getElementById('audio');"
             "        return a.duration > 0 && a.ended; }", timeout=90000)
-        stats = await page.evaluate("""() => {
-          function summarize(rows) {
-            const out = {};
-            const keys = new Set(); rows.forEach(w => Object.keys(w).forEach(k => keys.add(k)));
-            for (const k of keys) {
-              const v = rows.map(w => +w[k] || 0);
-              const sorted = v.slice().sort((a, b) => a - b);
-              const p10 = sorted[Math.floor((sorted.length - 1) * 10 / 100)];
-              out[k] = { max: Math.max(...v), mean: v.reduce((a, b) => a + b, 0) / v.length, p10 };
-            }
-            return out;
-          }
-          const rendered = summarize(window.__w.filter(w => Object.keys(w).length));
-          let animPop = {};
-          if (window.__anim && window.__anim.frames && window.__anim.index) {
-            const rows = window.__anim.frames.map(f => {
-              const w = {};
-              for (const [name, col] of window.__anim.index) w[name] = f[col];
-              return w;
-            });
-            animPop = summarize(rows);
-          }
-          return { rendered, animPop };
-        }""")
+        stats = await page.evaluate(
+            """(engine) => {
+                 function summarize(rows, keys) {
+                   const out = {};
+                   for (const k of keys) {
+                     const v = rows.map(r => +r[k] || 0);
+                     const sorted = v.slice().sort((a, b) => a - b);
+                     out[k] = {
+                       max: Math.max(...v), mean: v.reduce((a, b) => a + b, 0) / v.length,
+                       p10: sorted[Math.floor((sorted.length - 1) * 10 / 100)],
+                     };
+                   }
+                   return out;
+                 }
+                 const anim = window.__anim;
+                 const keys = anim.index.map(([name]) => name);
+                 const toRows = frames => frames.map(f => {
+                   const r = {}; for (const [name, col] of anim.index) r[name] = f[col]; return r;
+                 });
+                 const raw = summarize(toRows(anim.frames), keys);
+                 // 실제 운영 함수를 그대로 호출 — 손으로 (peak-p10)*gain 을 다시 계산하지 않는다
+                 const clone = { fps: anim.fps, index: anim.index, frames: anim.frames.map(r => r.slice()) };
+                 AvatarCore.shapeAnim(clone, engine);
+                 const shaped = summarize(toRows(clone.frames), keys);
+                 return { raw, shaped };
+               }""",
+            engine)
         await browser.close()
         return stats
 
 
+def verdict(kind: str, target: float, shaped: dict) -> tuple:
+    val = shaped["max"] if kind == "min" else shaped["mean"]
+    ok = (val >= target * MARGIN) if kind == "min" else (val <= target / MARGIN)
+    return val, ok
+
+
 async def main():
+    all_ok = True
     for engine in ("a2f", "neurosync"):
-        s = await probe(engine)
-        rendered, anim_pop = s["rendered"], s["animPop"]
-        print(f"\n===== {engine} =====")
-        print("  [렌더 — 재생 중 rAF 샘플, 화면에 보이는 값]")
-        for k in WATCH:
-            if k in rendered:
-                r = rendered[k]
-                print(f"    {k:14s} max={r['max']:.3f}  mean={r['mean']:.3f}  p10={r['p10']:.3f}")
-        print("  [anim — anim.frames 원본, shapeAnim 이 base 계산에 쓰는 모집단]")
-        for k in WATCH:
-            if k in anim_pop:
-                a = anim_pop[k]
-                print(f"    {k:14s} max={a['max']:.3f}  mean={a['mean']:.3f}  p10={a['p10']:.3f}")
-        # shapeAnim 은 anim.frames 전체에서 base(p10)를 구하므로 검산은 anim 열 기준
-        if "jawopen" in anim_pop:
-            peak, p10 = anim_pop["jawopen"]["max"], anim_pop["jawopen"]["p10"]
-            gain = GAIN[engine]
-            shaped = (peak - p10) * gain
-            verdict = "PASS" if shaped >= 0.7 else "FAIL"
-            print(f"  --> shapeAnim jawopen(anim 기준) = ({peak:.3f} - {p10:.3f}) * {gain} = {shaped:.3f}  [{verdict} >= 0.7]")
+        for label, text in TEXTS.items():
+            s = await probe(engine, text)
+            print(f"\n===== {engine} / {label} =====")
+            for k in WATCH:
+                if k not in s["raw"]:
+                    continue
+                r, sh = s["raw"][k], s["shaped"][k]
+                print(f"  {k:18s} raw(max={r['max']:.3f} mean={r['mean']:.3f} p10={r['p10']:.3f})"
+                      f"  shaped(max={sh['max']:.3f} mean={sh['mean']:.3f})")
+                if k in TARGETS:
+                    kind, target = TARGETS[k]
+                    val, ok = verdict(kind, target, sh)
+                    all_ok = all_ok and ok
+                    reason = ""
+                    if k in KILL[engine]:
+                        reason = "  (SHAPE.*.kill 로 0 처리됨)"
+                    elif kind == "max" and r["max"] < 1e-9 and sh["mean"] < 1e-9:
+                        reason = "  (엔진이 이 채널을 사실상 구동하지 않음 — raw 값 자체가 0)"
+                    tag = "PASS" if ok else "FAIL"
+                    cmp = ">=" if kind == "min" else "<="
+                    margin_val = target * MARGIN if kind == "min" else target / MARGIN
+                    print(f"    --> {k} {cmp} {target} (10% 마진: {margin_val:.4f}):"
+                          f" {val:.3f}  [{tag}]{reason}")
+    print("\n" + ("ALL CRITERIA PASS (10% margin)" if all_ok else "SOME CRITERIA FAIL"))
 
 
 asyncio.run(main())
