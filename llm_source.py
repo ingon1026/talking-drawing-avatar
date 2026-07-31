@@ -108,6 +108,45 @@ def _clean(s: str) -> str:
     return _DUP_END.sub(r"\1", s)
 
 
+def _ollama(messages: list[dict], schema: dict, *, timeout: float,
+            temperature: float, num_predict: int) -> str:
+    """Ollama /api/chat 요청 1회 → content 문자열. chat()·classify() 공용 경로.
+
+    전에는 두 함수가 이 요청/에러 매핑을 따로 구현해 서로 다른 방어를 갖고 있었다 —
+    classify() 만 RequestException(OOM 시 ChunkedEncodingError 등)을 잡았고, chat() 만
+    404 를 "ollama pull" 힌트로 바꿔줬다. 한 곳으로 모아 둘 다 같은 보호를 받게 한다.
+    """
+    try:
+        r = requests.post(
+            API,
+            json={
+                "model": MODEL,
+                "messages": messages,
+                "stream": False,
+                "format": schema,
+                "keep_alive": KEEP_ALIVE,
+                "options": {"num_ctx": NUM_CTX, "temperature": temperature,
+                            "num_predict": num_predict},
+            },
+            timeout=timeout,
+        )
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Ollama가 꺼져 있어요. `ollama serve` 로 켜 주세요.")
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Ollama 응답이 너무 늦어요.")
+    except requests.exceptions.RequestException:
+        # 위 두 예외의 상위 클래스 — 반드시 이 자리(마지막)에 둔다. 이 GPU 는 Ollama·
+        # NeuroSync·A2F-3D 가 12GB VRAM 을 나눠 쓰므로 Ollama 가 응답 도중 OOM-kill
+        # 되면 ConnectionError 가 아니라 ChunkedEncodingError 같은 형태로 나온다.
+        raise RuntimeError("Ollama 요청이 실패했어요.")
+
+    if r.status_code == 404:
+        raise RuntimeError(f"모델이 없어요. `ollama pull {MODEL}` 로 받아 주세요.")
+    if not r.ok:
+        raise RuntimeError(f"Ollama 요청이 실패했어요. (Ollama {r.status_code})")
+    return r.json().get("message", {}).get("content", "")
+
+
 def chat(text: str, history: list[dict] | None = None, persona: str | None = None) -> dict:
     """사용자 발화 → {"reply": 한국어 응답, "emotion": EMOTIONS 중 하나}.
 
@@ -119,30 +158,7 @@ def chat(text: str, history: list[dict] | None = None, persona: str | None = Non
             msgs.append({"role": m["role"], "content": str(m["content"])})
     msgs.append({"role": "user", "content": text})
 
-    try:
-        r = requests.post(
-            API,
-            json={
-                "model": MODEL,
-                "messages": msgs,
-                "stream": False,
-                "format": SCHEMA,
-                "keep_alive": KEEP_ALIVE,
-                "options": {"num_ctx": NUM_CTX, "temperature": 0.7, "num_predict": 120},
-            },
-            timeout=TIMEOUT,
-        )
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError("대화 서버(Ollama)가 꺼져 있어요. `ollama serve` 로 켜 주세요.")
-    except requests.exceptions.Timeout:
-        raise RuntimeError("대화 모델의 응답이 너무 늦어요. 잠시 뒤 다시 말 걸어 주세요.")
-
-    if r.status_code == 404:
-        raise RuntimeError(f"대화 모델이 없어요. `ollama pull {MODEL}` 로 받아 주세요.")
-    if not r.ok:
-        raise RuntimeError(f"대화 모델이 응답하지 못했어요. (Ollama {r.status_code})")
-
-    content = r.json().get("message", {}).get("content", "")
+    content = _ollama(msgs, SCHEMA, timeout=TIMEOUT, temperature=0.7, num_predict=120)
 
     # 스키마를 걸어도 파싱은 방어한다 → 실패하면 본문을 그대로 읽어 주는 쪽으로 폴백.
     # 단 num_predict 로 잘린 JSON 은 본문이 '{"reply": "...' 라 그대로 읽히면 안 된다.
@@ -221,36 +237,14 @@ def classify(sentences: list[str]) -> list[dict]:
     if not sentences:
         return []
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
-    try:
-        r = requests.post(
-            API,
-            json={
-                "model": MODEL,
-                "messages": [{"role": "system", "content": CLASSIFY_SYSTEM},
-                             {"role": "user", "content": numbered}],
-                "stream": False,
-                "format": _classify_schema(len(sentences)),
-                "keep_alive": KEEP_ALIVE,
-                # temperature 를 낮게: 분류는 창작이 아니다. num_predict 는 문장당 ~20토큰.
-                "options": {"num_ctx": NUM_CTX, "temperature": 0.2,
-                            "num_predict": 24 * len(sentences) + 32},
-            },
-            timeout=CLASSIFY_TIMEOUT,
-        )
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError("대화 서버(Ollama)가 꺼져 있어요.")
-    except requests.exceptions.Timeout:
-        raise RuntimeError("감정 분류가 너무 늦어요.")
-    except requests.exceptions.RequestException:
-        # 위 두 예외의 상위 클래스 — 반드시 이 자리(마지막)에 둔다. 이 GPU 는 Ollama·
-        # NeuroSync·A2F-3D 가 12GB VRAM 을 나눠 쓰므로 Ollama 가 응답 도중 OOM-kill
-        # 되면 ConnectionError 가 아니라 ChunkedEncodingError 같은 형태로 나온다.
-        raise RuntimeError("감정 분류 요청이 실패했어요.")
-    if not r.ok:
-        raise RuntimeError(f"감정 분류에 실패했어요. (Ollama {r.status_code})")
+    # temperature 를 낮게: 분류는 창작이 아니다. num_predict 는 문장당 ~20토큰.
+    content = _ollama(
+        [{"role": "system", "content": CLASSIFY_SYSTEM}, {"role": "user", "content": numbered}],
+        _classify_schema(len(sentences)), timeout=CLASSIFY_TIMEOUT, temperature=0.2,
+        num_predict=24 * len(sentences) + 32,
+    )
 
     try:
-        content = r.json().get("message", {}).get("content", "")
         if not isinstance(content, str):
             raise TypeError
         arr = json.loads(content).get("emotions", [])
