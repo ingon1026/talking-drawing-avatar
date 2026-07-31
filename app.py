@@ -25,7 +25,7 @@ ROOT = Path(__file__).parent
 OUT = ROOT / "output"
 OUT.mkdir(exist_ok=True)
 
-DEFAULT_VOICE = "ko-KR-SunHiNeural"
+DEFAULT_VOICE = "ko-KR-InJoonNeural"   # 남성 기본 — 클라이언트가 voice 를 안 보낼 때만 쓰인다
 
 app = FastAPI(title="말하는 그림 아바타")
 jobs: dict[str, dict] = {}
