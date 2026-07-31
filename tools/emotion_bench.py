@@ -67,7 +67,7 @@ _HELD_AND_NEW = [
 CASES = [(text, want, ORIG) for text, want in _ORIGINAL] + _HELD_AND_NEW
 
 # classify() 를 29문장 한 번에 부르면 두 가지가 실사용과 어긋난다: (1) 실제 서비스는
-# 발화 하나(1~3문장, MAX_SENTENCES=8)당 한 번만 부르므로 29개를 한 번에 넣는 것 자체가
+# 발화 하나(1~3문장, llm_source.MAX_SENTENCES 개)당 한 번만 부르므로 29개를 한 번에 넣는 것 자체가
 # 다른 과제(위치 드리프트, 옆 문장 라벨 베끼기)를 측정하게 된다. (2) 청크를 9~10개로
 # 실측했더니 모델이 가끔 요청한 문장 수보다 한 개 많은(또는 적은) 라벨을 내놓는
 # 불안정성이 나왔다(done_reason 은 "stop" — 컨텍스트 잘림이 아니라 모델 자체의 개수
@@ -108,7 +108,7 @@ def _classify_all(cases: list[tuple[str, str, str]]) -> list[dict]:
     return out
 
 
-def main() -> int:
+def main():
     labels = _classify_all(CASES)
 
     # 감정 x {원본, 신규(held+new)} 교차표 — 합계만 보면 "angry 신규는 잘 맞는데
@@ -116,9 +116,7 @@ def main() -> int:
     per_emotion: dict[str, dict[str, list[int]]] = {
         e: {"orig": [0, 0], "new": [0, 0]} for e in llm_source.EMOTIONS
     }
-    orig_hit = orig_total = 0
-    held_hit = held_total = 0
-    new_hit = new_total = 0
+    held_hit = held_total = 0   # held는 per_emotion의 "new" 버킷(held+new)에 섞여 있어 따로 셀 수밖에 없다
 
     for (text, want, tag), got in zip(CASES, labels):
         ok = int(got["emo"] == want)
@@ -129,28 +127,28 @@ def main() -> int:
         per_emotion[want][bucket][0] += ok
         per_emotion[want][bucket][1] += 1
 
-        if tag == ORIG:
-            orig_hit += ok
-            orig_total += 1
-        else:
-            new_hit += ok
-            new_total += 1
-            if tag == HELD:
-                held_hit += ok
-                held_total += 1
+        if tag == HELD:
+            held_hit += ok
+            held_total += 1
 
     print("\n감정별 적중 (원본 / 신규=held+new):")
     for e in llm_source.EMOTIONS:
         o_h, o_t = per_emotion[e]["orig"]
         n_h, n_t = per_emotion[e]["new"]
-        print(f"  {e:9s} 원본 {o_h}/{o_t or 0}   신규 {n_h}/{n_t or 0}")
+        print(f"  {e:9s} 원본 {o_h}/{o_t}   신규 {n_h}/{n_t}")
+
+    # orig/new 합계는 per_emotion 교차표에서 그대로 파생된다 — 별도 누산기로 중복 셀 필요 없다.
+    orig_hit = sum(per_emotion[e]["orig"][0] for e in llm_source.EMOTIONS)
+    orig_total = sum(per_emotion[e]["orig"][1] for e in llm_source.EMOTIONS)
+    new_hit = sum(per_emotion[e]["new"][0] for e in llm_source.EMOTIONS)
+    new_total = sum(per_emotion[e]["new"][1] for e in llm_source.EMOTIONS)
 
     total_hit = orig_hit + new_hit
     total = orig_total + new_total
     print(f"\n전체            {total_hit}/{total}")
     print(f"원본 10개       {orig_hit}/{orig_total}")
     print(f"신규 19개       {new_hit}/{new_total}  (그 중 held-out 7개 {held_hit}/{held_total})")
-    return 0
 
 
-raise SystemExit(main())
+if __name__ == "__main__":
+    main()
