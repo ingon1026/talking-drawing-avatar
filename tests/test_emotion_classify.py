@@ -34,3 +34,17 @@ def test_split_sentences_caps_at_eight():
 
 def test_split_sentences_empty():
     assert llm_source.split_sentences("   ") == []
+
+
+def test_split_sentences_merges_trailing_short_fragment_backward():
+    # 꼬리에 남은 짧은 조각("네.")도 앞으로 접혀야 한다 — 전방 병합 루프만으로는 못 잡는다.
+    assert llm_source.split_sentences("감사합니다. 정말 고마워요. 네.") == [
+        "감사합니다. 정말 고마워요. 네."]
+
+
+def test_split_sentences_lone_short_fragment_has_nothing_to_merge_into():
+    assert llm_source.split_sentences("네.") == ["네."]
+
+
+def test_split_sentences_no_terminal_punctuation_returns_whole_string():
+    assert llm_source.split_sentences("오늘 정말 힘들었어요") == ["오늘 정말 힘들었어요"]

@@ -43,6 +43,10 @@ def split_sentences(text: str) -> list[str]:
             merged[-1] += " " + p
         else:
             merged.append(p)
+    # 마지막 조각도 짧으면 앞으로 접는다 (앞 병합 루프는 뒤로만 흡수하므로 꼬리는 못 잡는다)
+    if len(merged) > 1 and len(merged[-1]) < MIN_SENTENCE_CHARS:
+        tail = merged.pop()
+        merged[-1] += " " + tail
     if len(merged) > MAX_SENTENCES:
         merged = merged[:MAX_SENTENCES - 1] + [" ".join(merged[MAX_SENTENCES - 1:])]
     return merged
