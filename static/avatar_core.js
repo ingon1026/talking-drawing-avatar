@@ -359,10 +359,8 @@ window.AvatarCore = (() => {
   function makeMouthPicker(W) {
     let curMouth = "closed", prevMouth = null, switchAt = 0, mouthCand = "closed", candSince = 0;
     const FADE_MS = 90;
-    // jawGain: shapeAnim이 이번 발화에 적용한 jawopen 증폭 — 아래 임계값은 증폭 전 스케일로
-    // 튜닝돼 있어 나눠서 되돌린다(생략 시 1=무보정).
-    function targetMouth(jawGain = 1) {
-      const jaw = W("jawopen") / jawGain;
+    function targetMouth() {
+      const jaw = W("jawopen");
       const round = roundness(W);
       const wide = Math.max(avgLR(W, "mouthsmile"), avgLR(W, "mouthstretch"));
       const press = avgLR(W, "mouthpress");
@@ -373,8 +371,8 @@ window.AvatarCore = (() => {
       return jaw < 0.14 ? "closed" : "E";
     }
     return {
-      pick(now, jawGain = 1) {
-        const t = targetMouth(jawGain);
+      pick(now) {
+        const t = targetMouth();
         if (t !== mouthCand) { mouthCand = t; candSince = now; }
         if (mouthCand !== curMouth && now - candSince >= 70) {  // 70ms 유지 시에만 전환
           prevMouth = curMouth; switchAt = now; curMouth = mouthCand;
@@ -387,12 +385,10 @@ window.AvatarCore = (() => {
   // ---------- 벡터 입 (근육 채널 → 윤곽 제어점 연속 변형) ----------
   // puppet 의 superset 공식으로 통합. 닫힘곡선 제어점 압력 = max(근육 press, mouthclose*0.5) 로
   // puppet(press 위주)·docs(mouthclose 위주) 양쪽 기존 픽셀을 회귀 없이 재현. frown 반영은 puppet 항.
-  // jawGain: shapeAnim이 이번 발화에 적용한 jawopen 증폭(anim.jawGain) — 이 함수의 입 크기 공식은
-  // 증폭 전 스케일로 튜닝돼 있어 나눠서 되돌린다(생략 시 1=무보정, 기존 호출부 안전).
-  function drawVectorMouth(ctx, W, manifest, jawDy, jawGain = 1) {
+  function drawVectorMouth(ctx, W, manifest, jawDy) {
     const st = manifest.mouthStyle || {};
     const [mcx, mcy0] = manifest.mouthCenter || [256, 340];
-    const jaw = W("jawopen") / jawGain;
+    const jaw = W("jawopen");
     const round = roundness(W);
     const pressM = avgLR(W, "mouthpress");        // 근육 압력 (openH 폐합용)
     const upperUp = avgLR(W, "mouthupperup");
@@ -452,8 +448,8 @@ window.AvatarCore = (() => {
   // ---------- 스프라이트 입 크로스페이드 ----------
   // 반드시 스프라이트 모드 브랜치에서만(프레임당 1회) 호출 — pick() 이 히스테리시스 상태를 전진시킴.
   // 전환 중(fade<1)이고 이전 스프라이트가 존재하면 α로 겹쳐 페이드, 아니면 현재만. jawDy 만큼 세로 이동.
-  function drawSpriteMouth(ctx, parts, picker, now, jawDy, jawGain = 1) {
-    const { cur, prev, fade } = picker.pick(now, jawGain);
+  function drawSpriteMouth(ctx, parts, picker, now, jawDy) {
+    const { cur, prev, fade } = picker.pick(now);
     const drawM = name => parts[name] && ctx.drawImage(parts[name], 0, jawDy);
     if (fade < 1 && prev && parts["mouth_" + prev]) {
       ctx.globalAlpha = 1 - fade; drawM("mouth_" + prev);
