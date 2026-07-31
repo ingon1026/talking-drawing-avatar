@@ -55,20 +55,26 @@ A2F 쪽 세기 파라미터를 찾았으나 `model.json`은 경로 설정뿐이�
 ## 3. 아키텍처
 
 ```
-                          ┌── LLM 감정 분류 (신규) ──┐
-텍스트 ──┬──────────────→ │  /api/emotion            │ → segments[{text,emo,intensity}]
-         │                 └──────────────────────────┘        │
-         │                        (병렬)                        │
-         └→ TTS(edge-tts) → wav → A2F/NeuroSync → anim ─┐      │
-                    │                                    │      │
-                    └→ WordBoundary → 문장 시작 시각 ────┼──────┤
-                                                          ↓      ↓
-                                              shapeAnim(정규화·증폭)
-                                                          ↓
-                                            렌더 루프: 시간축 감정 전환 + 모프
+텍스트
+  │
+  ├─① POST /api/emotion  → segments[{text, emo, intensity}]      (+0.78초)
+  │        │
+  │        └→ 첫 문장 감정 → voiceProsody(JS) ─┐
+  │                                            ↓
+  └─② POST /api/speak_rt {text, prosody} → TTS(edge-tts, stream)
+              ├→ WordBoundary → 문장 시작 시각 → sentences[{text, start}]
+              └→ wav → A2F / NeuroSync → frames
+                          ↓
+              shapeAnim(정규화·증폭)     ← 클라, 발화당 1회
+                          ↓
+     렌더 루프: audio.currentTime 으로 문장 감정 전환 + 모프 적용
 ```
 
-기존 대화 모드는 `/api/chat`이 이미 감정을 주므로 `/api/emotion`을 타지 않는다(추가 지연 0).
+①과 ②는 **직렬**이다(②가 ①의 결과인 prosody를 필요로 한다).
+기존 대화 모드는 `/api/chat`이 이미 감정을 주므로 ①을 건너뛴다 — **추가 지연 0**.
+
+`segments`(①)와 `sentences`(②)는 **같은 `split_sentences()`** 로 쪼개므로 인덱스가 일치한다.
+길이가 다르면 문장별 전환을 포기하고 발화 전체에 첫 감정 하나를 쓴다.
 
 ## 4. 컴포넌트
 
@@ -121,11 +127,19 @@ async function classifyEmotion(text, { timeoutMs = 1500 } = {})
 ```
 
 - `speakWithEmotion()`에서 `emotion` 인자가 없고 `autoEmo`가 켜져 있으면 호출한다.
-- **`speakFlow`(TTS+A2F 생성)와 `Promise.all`로 병렬 실행.** 발화 생성이 1~2초 걸리므로
-  1.5초 타임아웃 안에 감정이 도착한다 — 체감 지연 0.
+- **`speakFlow`보다 먼저(직렬) 호출한다.** 목소리 톤(`prosody`)이 `/api/speak_rt`의 요청
+  파라미터라 감정을 모르면 TTS를 만들 수 없다 — 병렬로 돌리면 얼굴에만 감정이 실리고
+  목소리는 무표정으로 남는다.
+- **측정된 비용: 발화 시작 +0.78초**(Ollama 웜, `keep_alive` 상주 기준. 콜드 첫 호출 3.5초).
+  현재 발화 시작까지 ~1.5초 → ~2.3초가 된다. 목소리·표정을 함께 얻는 대가로 수용한다.
+- 왕복이 2회(감정 → 발화)인 이유: 프로소디 계산(`voiceProsody`)이 JS에 있고, 서버리스
+  데모 페이지(`docs/index.html`)도 같은 함수를 쓴다. 서버가 프로소디를 계산하게 하면
+  같은 표를 파이썬에 복제해야 하므로, 왕복 1회를 더 쓰는 쪽이 변경이 작다
+  (localhost 왕복 ≈ 5ms).
 - 실패·타임아웃·503 → 기존 `inferEmotion()` 결과 사용. **오프라인에서 현재보다 나빠지지 않는다.**
-- 목소리 톤(`voiceProsody`)은 첫 문장 감정으로 결정한다. TTS는 한 번에 생성하므로
-  문장별 톤 변화는 이번 범위 밖(비목표).
+- 목소리 톤은 **첫 문장** 감정으로 결정한다. TTS를 한 번에 생성하므로 문장별 톤 변화는
+  범위 밖(표정은 문장별로 바뀐다 — §4C).
+- **대화 모드는 영향 없다** — `/api/chat`이 이미 감정을 주므로 이 경로를 타지 않는다(추가 0초).
 
 ### C. 문장별 감정 전환
 
@@ -140,12 +154,15 @@ async function classifyEmotion(text, { timeoutMs = 1500 } = {})
 문장 시작 시각은 각 문장의 첫 단어 offset(초 = `offset / 1e7`). 단어와 문장의 대응은
 누적 문자 길이로 매칭한다.
 
-`/api/speak_rt` 응답에 추가:
+`/api/speak_rt` 응답에 추가 (감정은 ①의 `segments`에 있으므로 여기엔 시각만 싣는다):
 
 ```json
-"sentences": [{"start": 0.0, "emo": "sad", "intensity": 0.7},
-              {"start": 2.4, "emo": "joy", "intensity": 0.6}]
+"sentences": [{"text": "오늘 정말 힘들었어요.", "start": 0.0},
+              {"text": "그래도 끝나서 다행이에요!", "start": 2.4}]
 ```
+
+문장 분할은 `llm_source.split_sentences()`를 그대로 쓴다 — ①과 같은 함수라 인덱스가 맞는다.
+`llm_source` 임포트가 실패하면 `sentences`를 생략한다(발화는 정상 진행).
 
 **`avatar_core.js` — 시간축 적용**
 
@@ -221,6 +238,7 @@ NeuroSync의 과한 오므림은 `0.781 × 0.7 = 0.55`로 완화.
 ## 7. 수용 기준
 
 - [ ] 감정 벤치 10문장 **8/10 이상** (현재 1/10)
+- [ ] 직접 입력 발화의 감정 분류 추가 지연 **1.0초 이하** (웜 실측 0.78초)
 - [ ] `jawOpen` 최대 **0.7 이상** — A2F·NeuroSync 양쪽
 - [ ] NeuroSync `browInnerUp` 평균 **0.05 이하** (현재 0.145)
 - [ ] A2F `jawRight` 평균 **0.02 이하** (현재 0.170)
