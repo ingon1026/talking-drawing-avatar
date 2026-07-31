@@ -3,23 +3,19 @@
 avatar_core.js 는 window.AvatarCore 를 정의하는 평범한 전역 스크립트(모듈 아님)라
 빈 페이지에 주입해 그대로 부를 수 있다 — 서버 기동 불필요.
 """
-from pathlib import Path
-
 import pytest
 
 from conftest import ROOT
+from playwright_chromium import launch_kwargs
 
 CORE = ROOT / "static" / "avatar_core.js"
-CHROME = Path("/home/ingon/.cache/ms-playwright/chromium_headless_shell-1234"
-              "/chrome-headless-shell-linux64/chrome-headless-shell")
 
 
 @pytest.fixture(scope="module")
 def page():
     pw = pytest.importorskip("playwright.sync_api")
     with pw.sync_playwright() as p:
-        kw = {"executable_path": str(CHROME)} if CHROME.exists() else {}
-        browser = p.chromium.launch(**kw)
+        browser = p.chromium.launch(**launch_kwargs())
         pg = browser.new_page()
         pg.set_content("<html><body></body></html>")
         pg.add_script_tag(content=CORE.read_text(encoding="utf-8"))

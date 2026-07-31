@@ -28,12 +28,14 @@ clamp(%) 는 shaped 값이 상한 1.0 에 붙어있는 프레임의 비율이다
 입이 이진(열림/닫힘)으로만 보이는지 가늠하는 지표. 수용 기준은 없고 참고용으로만 표기한다.
 """
 import asyncio
+import sys
 from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-CHROME = Path("/home/ingon/.cache/ms-playwright/chromium_headless_shell-1234"
-              "/chrome-headless-shell-linux64/chrome-headless-shell")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from playwright_chromium import launch_kwargs
+
 # 문장 1: 원래 발화(자음·무음 섞임). 문장 2: 개모음 위주·무음 적음 — 다른 모음/무음
 # 분포에서도 게인이 유효한지 교차 확인한다.
 TEXTS = {
@@ -82,9 +84,8 @@ def _summarize(frames: list, index: list) -> dict:
 
 async def probe(engine: str, text: str) -> dict:
     async with async_playwright() as p:
-        kw = {"executable_path": str(CHROME)} if CHROME.exists() else {}
         browser = await p.chromium.launch(
-            args=["--autoplay-policy=no-user-gesture-required"], **kw)
+            args=["--autoplay-policy=no-user-gesture-required"], **launch_kwargs())
         page = await browser.new_page()
         raw_holder: dict = {}
 
