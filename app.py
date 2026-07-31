@@ -231,6 +231,29 @@ def chat(req: ChatReq):
         raise HTTPException(503, str(e))
 
 
+class EmotionReq(BaseModel):
+    text: str
+
+
+@app.post("/api/emotion")
+def emotion(req: EmotionReq):
+    """텍스트 → 문장별 감정. 실패는 503 — 클라이언트가 규칙 폴백으로 조용히 진행한다."""
+    if not req.text.strip():
+        raise HTTPException(400, "빈 입력입니다.")
+    try:
+        import llm_source
+    except ModuleNotFoundError:
+        raise HTTPException(503, "감정 분류를 쓸 수 없습니다 (llm_source.py 없음).")
+    sentences = llm_source.split_sentences(req.text)
+    if not sentences:
+        raise HTTPException(400, "문장을 찾지 못했습니다.")
+    try:
+        labels = llm_source.classify_cached(tuple(sentences))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    return {"segments": [{"text": s, **lab} for s, lab in zip(sentences, labels)]}
+
+
 class CharacterCreateReq(BaseModel):
     name: str = "내 캐릭터"
     image_b64: str            # dataURL 또는 base64
