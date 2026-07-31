@@ -2,7 +2,7 @@
 
     chat(text, history) -> {"reply": str, "emotion": str}
 
-emotion 은 avatar_core.js 의 EMOTIONS 키와 같은 5종(neutral/joy/sad/angry/surprise)이라
+emotion 은 avatar_core.js 의 EMOTIONS 키와 같은 7종(neutral/joy/sad/angry/surprise/fear/shy)이라
 클라이언트가 그대로 표정 프리셋으로 쓴다. reply 는 TTS 로 읽히므로 짧은 한국어 구어체
 1~2문장이며, 이모지·마크다운은 프롬프트로 막고 남으면 _clean() 이 걷어낸다.
 
@@ -25,7 +25,27 @@ NUM_CTX = 2048       # KV 캐시 = VRAM. 대화 히스토리 몇 턴에 충분�
 HISTORY_TURNS = 6    # 최근 메시지 6개(=3턴)만 넘겨 컨텍스트·지연을 묶어 둔다.
 TIMEOUT = 60
 
-EMOTIONS = ("neutral", "joy", "sad", "angry", "surprise")
+EMOTIONS = ("neutral", "joy", "sad", "angry", "surprise", "fear", "shy")
+
+_SPLIT = re.compile(r"(?<=[.!?…])\s+")
+MIN_SENTENCE_CHARS = 10   # 이보다 짧은 조각은 앞 문장에 붙인다 ("네." 같은 맞장구)
+MAX_SENTENCES = 8         # LLM 출력 길이를 묶어 지연을 예측 가능하게 한다
+
+
+def split_sentences(text: str) -> list[str]:
+    """문장 분할. 감정 분류(①)와 발화 타이밍(②)이 같은 결과를 써야 인덱스가 맞는다."""
+    parts = [p.strip() for p in _SPLIT.split(text.strip()) if p.strip()]
+    if not parts:
+        return []
+    merged = [parts[0]]
+    for p in parts[1:]:
+        if len(merged[-1]) < MIN_SENTENCE_CHARS:
+            merged[-1] += " " + p
+        else:
+            merged.append(p)
+    if len(merged) > MAX_SENTENCES:
+        merged = merged[:MAX_SENTENCES - 1] + [" ".join(merged[MAX_SENTENCES - 1:])]
+    return merged
 
 # format 을 스키마로 주면 Ollama 가 문법 제약 디코딩을 건다. format:"json" 만 쓰면 2.4B 가
 # 제약을 빈 객체 {} 로 만족시켜 버리는 일이 실측 8회 중 2회 나왔다(스키마로는 0회).
