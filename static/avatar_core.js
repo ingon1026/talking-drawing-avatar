@@ -189,7 +189,7 @@ window.AvatarCore = (() => {
     // 항상 새 객체로 스케일 — 공유 EMOTIONS 프리셋 앨리어싱 회피(v*1===v 라 무손실).
     // isSticky=false(자동 발화 감정)면 발화가 끝난 뒤 표정이 얼어붙지 않고 천천히 풀린다.
     let curKey = "neutral", curInt = 1;   // 몸짓 연동용 현재 감정 (current() 로 노출)
-    let trackSeg = null, fadeFrom = {}, fadeAt = 0;   // 문장별 전환용 크로스페이드 상태
+    let trackSeg = null, fadeFrom = {};   // 문장별 전환용 크로스페이드 상태
     function setEmotion(key, intensity = 1, isSticky = true) {
       const base = EMOTIONS[key] || EMOTIONS.neutral;
       emotion = {};
@@ -209,14 +209,17 @@ window.AvatarCore = (() => {
         if (!track || !track.length || sticky) return;   // 수동 버튼이 눌렸으면 사용자 의도가 우선
         let seg = track[0];
         for (const t of track) if (tSec >= t.start) seg = t;
-        if (seg !== trackSeg) { fadeFrom = emotion; fadeAt = tSec; trackSeg = seg; }
-        const k = Math.min(1, Math.max(0, (tSec - fadeAt) / CROSSFADE_S));
+        if (seg !== trackSeg) { fadeFrom = emotion; trackSeg = seg; }
+        // fadeAt=seg.start: 경계에서 tSec≈seg.start(위 루프가 tSec>=seg.start 인 세그를 고르므로)이고,
+        // 첫 호출은 speakWithEmotion 이 이미 세그 0 프리셋을 적용해둔 뒤라 k=1 이 곧바로 맞다.
+        // 별도 변수로 관측 시각을 박제하지 않으므로 일시정지 후에도 페이드가 어긋나지 않는다.
+        const k = Math.min(1, Math.max(0, (tSec - seg.start) / CROSSFADE_S));
         const base = EMOTIONS[seg.emo] || EMOTIONS.neutral;
         const blended = {};
         for (const key in fadeFrom) blended[key] = fadeFrom[key] * (1 - k);
         for (const key in base) blended[key] = (blended[key] || 0) + base[key] * seg.intensity * k;
         emotion = blended;
-        sticky = false; hold = 1;      // 발화 중 유지, 끝나면 기존대로 감쇠
+        hold = 1;      // 발화 중 유지, 끝나면 기존대로 감쇠
         curKey = seg.emo; curInt = seg.intensity;
       },
       // 감정 프리셋을 현재 평활값에 max-결합. speaking=발화 중이면 유지, 자동 감정은 유휴 시 ~1.5s 감쇠.
