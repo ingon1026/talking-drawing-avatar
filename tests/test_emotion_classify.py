@@ -135,6 +135,14 @@ def test_classify_wraps_other_request_exceptions_as_runtime_error(monkeypatch):
         llm_source.classify(["문장 하나입니다."])
 
 
+def test_classify_rejects_unhashable_intensity(monkeypatch):
+    # intensity 가 문자열이 아니라 list 등으로 오면 INTENSITY.get() 이 RuntimeError 밖에서
+    # TypeError: unhashable type 으로 터질 수 있었다 — /api/emotion 이 500 대신 503 을 내야 한다.
+    _mock_ollama(monkeypatch, {"emotions": [{"emotion": "joy", "intensity": []}]})
+    with pytest.raises(RuntimeError):
+        llm_source.classify(["문장 하나입니다."])
+
+
 def test_classify_cached_reuses_result_without_recalling_model(monkeypatch):
     llm_source.classify_cached.cache_clear()
     calls = _mock_ollama(monkeypatch, {"emotions": [{"emotion": "joy", "intensity": "mid"}]})

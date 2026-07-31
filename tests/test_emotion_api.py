@@ -11,12 +11,17 @@ import llm_source
 
 
 def test_emotion_returns_one_segment_per_sentence(monkeypatch):
-    monkeypatch.setattr(llm_source, "classify_cached",
-                        lambda s: tuple({"emo": "joy", "intensity": 0.7} for _ in s))
+    # 라벨을 인덱스별로 구별되게 만들어야 한다 — 모든 문장에 같은 라벨을 주면
+    # 핸들러가 순서를 뒤집거나 labels[0] 을 방송해도 테스트가 못 잡는다.
+    emos = ["sad", "joy"]
+    monkeypatch.setattr(
+        llm_source, "classify_cached",
+        lambda s: tuple({"emo": emos[i], "intensity": 0.1 * (i + 1)} for i in range(len(s))))
     out = appmod.emotion(appmod.EmotionReq(text="오늘 정말 힘들었어요. 그래도 다행이에요!"))
-    assert [s["text"] for s in out["segments"]] == [
-        "오늘 정말 힘들었어요.", "그래도 다행이에요!"]
-    assert out["segments"][0]["emo"] == "joy"
+    segs = out["segments"]
+    assert [s["text"] for s in segs] == ["오늘 정말 힘들었어요.", "그래도 다행이에요!"]
+    assert segs[0]["emo"] == "sad" and segs[0]["intensity"] == pytest.approx(0.1)
+    assert segs[1]["emo"] == "joy" and segs[1]["intensity"] == pytest.approx(0.2)
 
 
 def test_emotion_rejects_blank():

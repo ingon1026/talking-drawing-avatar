@@ -228,8 +228,14 @@ def classify(sentences: list[str]) -> list[dict]:
         if not isinstance(e, dict):
             raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
         emo = e.get("emotion")
-        out.append({"emo": emo if emo in EMOTIONS else "neutral",
-                    "intensity": INTENSITY.get(e.get("intensity"), 0.70)})
+        try:
+            intensity = INTENSITY.get(e.get("intensity"), 0.70)
+        except TypeError:
+            # intensity 가 list/dict 등 해시 불가 타입으로 오면 dict.get() 이 여기서
+            # TypeError 로 터진다 — RuntimeError 로 감싸야 /api/emotion 이 500 이 아니라
+            # 503(폴백)으로 나간다.
+            raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
+        out.append({"emo": emo if emo in EMOTIONS else "neutral", "intensity": intensity})
     return out
 
 
