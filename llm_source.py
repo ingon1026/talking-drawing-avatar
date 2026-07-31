@@ -212,21 +212,14 @@ CLASSIFY_SYSTEM = (
 )
 
 
-class _LengthMismatch(RuntimeError):
-    """결과 개수가 문장 수와 다름 — classify() 에서 한 번 재요청할 대상.
+def classify(sentences: list[str]) -> list[dict]:
+    """문장 리스트 → [{"emo", "intensity"}] (입력과 같은 길이).
 
-    _classify_schema() 의 minItems/maxItems 문법 제약이 들어간 뒤로는 실측
-    87/87(클린 8문장·병합-다중문장 조합 포함)에서 이 경로가 한 번도 안 걸렸다 —
-    즉 정상 경로에서는 이제 거의 안 일어난다. 그래도 값싼 보험으로 남긴다: 다른
-    Ollama 버전/모델이 이 키워드를 무시할 수도 있고, 스키마 자체는 지켜도 파싱
-    전 단계에서 드물게 어긋나는 경우까지 배제할 근거는 없다. 다른 RuntimeError
-    (연결 끊김, 파싱 실패 등)는 재시도로 못 고치는 실패라 구분해서 이 경우만
-    재시도한다.
+    문장 분할은 호출측이 끝낸 상태로 들어온다 — 모델이 텍스트를 재작성해
+    원문과 어긋나는 사고를 막으려고 라벨링만 시킨다.
     """
-
-
-def _classify_once(sentences: list[str]) -> list:
-    """Ollama 요청 1회 → emotions 배열(길이 검증까지). 재시도 루프는 classify() 몫."""
+    if not sentences:
+        return []
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
     try:
         r = requests.post(
@@ -268,26 +261,7 @@ def _classify_once(sentences: list[str]) -> list:
     if not isinstance(arr, list):
         raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
     if len(arr) != len(sentences):
-        raise _LengthMismatch("감정 분류 결과 개수가 문장 수와 다릅니다.")
-    return arr
-
-
-def classify(sentences: list[str]) -> list[dict]:
-    """문장 리스트 → [{"emo", "intensity"}] (입력과 같은 길이).
-
-    문장 분할은 호출측이 끝낸 상태로 들어온다 — 모델이 텍스트를 재작성해
-    원문과 어긋나는 사고를 막으려고 라벨링만 시킨다.
-    """
-    if not sentences:
-        return []
-    try:
-        arr = _classify_once(sentences)
-    except _LengthMismatch:
-        # 개수 불일치 1회는 확률적 실수인 경우가 많아 한 번 더 물으면 대개 맞는다
-        # (tools/emotion_bench.py 의 RETRIES 와 같은 근거). 루프가 아니라 한 번만 —
-        # 결정적으로 틀리는 경우(예: 8문장)는 재시도로 못 고치므로 MAX_SENTENCES 를
-        # 그 실패 지점 밖으로 낮추는 쪽이 맞는 처방이다.
-        arr = _classify_once(sentences)
+        raise RuntimeError("감정 분류 결과 개수가 문장 수와 다릅니다.")
 
     out = []
     for e in arr:

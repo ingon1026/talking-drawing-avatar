@@ -91,37 +91,12 @@ def test_classify_maps_intensity_words_to_numbers(monkeypatch):
 
 
 def test_classify_rejects_length_mismatch(monkeypatch):
-    _mock_ollama(monkeypatch, {"emotions": [{"emotion": "sad", "intensity": "mid"}]})
-    with pytest.raises(RuntimeError):
-        llm_source.classify(["문장 하나입니다.", "문장 둘입니다."])
-
-
-def test_classify_retries_once_on_length_mismatch_then_succeeds(monkeypatch):
-    # 1차 응답은 문장이 2개인데 1개만 옴(개수 불일치) → 재요청에서 2개가 오면 성공해야 한다.
-    payloads = [
-        {"emotions": [{"emotion": "sad", "intensity": "mid"}]},
-        {"emotions": [{"emotion": "sad", "intensity": "mid"},
-                       {"emotion": "joy", "intensity": "low"}]},
-    ]
-    calls = []
-
-    def _post(*a, **k):
-        calls.append((a, k))
-        return _FakeResp(payloads[len(calls) - 1])
-
-    monkeypatch.setattr(llm_source.requests, "post", _post)
-    assert llm_source.classify(["문장 하나입니다.", "문장 둘입니다."]) == [
-        {"emo": "sad", "intensity": 0.70},
-        {"emo": "joy", "intensity": 0.45}]
-    assert len(calls) == 2
-
-
-def test_classify_raises_after_two_length_mismatches(monkeypatch):
-    # 재요청에서도 개수가 또 틀리면(루프가 아니라 딱 한 번만 더 물으므로) 그대로 실패해야 한다.
+    # 스키마의 minItems/maxItems 가 실측 87/87 로 개수를 강제하므로 재시도는 없다 —
+    # 한 번만 묻고 그대로 실패해야 한다.
     calls = _mock_ollama(monkeypatch, {"emotions": [{"emotion": "sad", "intensity": "mid"}]})
     with pytest.raises(RuntimeError):
         llm_source.classify(["문장 하나입니다.", "문장 둘입니다."])
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_classify_falls_back_to_neutral_on_unknown_label(monkeypatch):
