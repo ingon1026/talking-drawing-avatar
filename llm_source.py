@@ -25,12 +25,20 @@ KEEP_ALIVE = -1   # 상시 상주 — 유휴 언로드 후 첫 대화 ~3s 재로
 NUM_CTX = 2048       # KV 캐시 = VRAM. 대화 히스토리 몇 턴에 충분하다.
 HISTORY_TURNS = 6    # 최근 메시지 6개(=3턴)만 넘겨 컨텍스트·지연을 묶어 둔다.
 TIMEOUT = 60
+# classify() 전용 타임아웃 — 설계 스펙(§4A)은 분류에 8s 예산을 준다. chat() 의 60s 를
+# 그대로 쓰면 클라이언트(4000ms)가 이미 포기한 뒤에도 서버 요청이 최대 60s 를 붙잡고
+# Ollama VRAM(A2F-3D·NeuroSync 와 공유)을 놓지 않는다 — 재시도한 사용자만큼 고아
+# 추론이 쌓인다.
+CLASSIFY_TIMEOUT = 8
 
 EMOTIONS = ("neutral", "joy", "sad", "angry", "surprise", "fear", "shy")
 
 _SPLIT = re.compile(r"(?<=[.!?…])\s+")
 MIN_SENTENCE_CHARS = 10   # 이보다 짧은 조각은 앞 문장에 붙인다 ("네." 같은 맞장구)
-MAX_SENTENCES = 8         # LLM 출력 길이를 묶어 지연을 예측 가능하게 한다
+# 실측(2026-07-31): 8문장은 모델이 9개 라벨을 내놓는 실패가 결정적으로 재현됐다
+# (done_reason=stop, 같은 세트로 재시도해도 동일) — MAX_SENTENCES=8 이 매 긴 발화를
+# 정확히 그 실패 지점으로 밀어넣고 있었다. 6문장까지는 안정적이라 상한을 낮춘다.
+MAX_SENTENCES = 6         # LLM 출력 길이를 묶어 지연을 예측 가능하게 한다
 
 
 def split_sentences(text: str) -> list[str]:
@@ -187,14 +195,17 @@ CLASSIFY_SYSTEM = (
 )
 
 
-def classify(sentences: list[str]) -> list[dict]:
-    """문장 리스트 → [{"emo", "intensity"}] (입력과 같은 길이).
+class _LengthMismatch(RuntimeError):
+    """결과 개수가 문장 수와 다름 — classify() 에서 한 번 재요청할 대상.
 
-    문장 분할은 호출측이 끝낸 상태로 들어온다 — 모델이 텍스트를 재작성해
-    원문과 어긋나는 사고를 막으려고 라벨링만 시킨다.
+    실측상 컨텍스트 잘림이 아니라 모델이 가끔 문장 하나를 더/덜 세는 실수였다
+    (done_reason=stop, tools/emotion_bench.py 참고). 다른 RuntimeError(연결 끊김,
+    파싱 실패 등)는 재시도로 못 고치는 실패라 구분해서 이 경우만 재시도한다.
     """
-    if not sentences:
-        return []
+
+
+def _classify_once(sentences: list[str]) -> list:
+    """Ollama 요청 1회 → emotions 배열(길이 검증까지). 재시도 루프는 classify() 몫."""
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
     try:
         r = requests.post(
@@ -210,7 +221,7 @@ def classify(sentences: list[str]) -> list[dict]:
                 "options": {"num_ctx": NUM_CTX, "temperature": 0.2,
                             "num_predict": 24 * len(sentences) + 32},
             },
-            timeout=TIMEOUT,
+            timeout=CLASSIFY_TIMEOUT,
         )
     except requests.exceptions.ConnectionError:
         raise RuntimeError("대화 서버(Ollama)가 꺼져 있어요.")
@@ -236,7 +247,26 @@ def classify(sentences: list[str]) -> list[dict]:
     if not isinstance(arr, list):
         raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
     if len(arr) != len(sentences):
-        raise RuntimeError("감정 분류 결과 개수가 문장 수와 다릅니다.")
+        raise _LengthMismatch("감정 분류 결과 개수가 문장 수와 다릅니다.")
+    return arr
+
+
+def classify(sentences: list[str]) -> list[dict]:
+    """문장 리스트 → [{"emo", "intensity"}] (입력과 같은 길이).
+
+    문장 분할은 호출측이 끝낸 상태로 들어온다 — 모델이 텍스트를 재작성해
+    원문과 어긋나는 사고를 막으려고 라벨링만 시킨다.
+    """
+    if not sentences:
+        return []
+    try:
+        arr = _classify_once(sentences)
+    except _LengthMismatch:
+        # 개수 불일치 1회는 확률적 실수인 경우가 많아 한 번 더 물으면 대개 맞는다
+        # (tools/emotion_bench.py 의 RETRIES 와 같은 근거). 루프가 아니라 한 번만 —
+        # 결정적으로 틀리는 경우(예: 8문장)는 재시도로 못 고치므로 MAX_SENTENCES 를
+        # 그 실패 지점 밖으로 낮추는 쪽이 맞는 처방이다.
+        arr = _classify_once(sentences)
 
     out = []
     for e in arr:
