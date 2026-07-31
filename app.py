@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -60,7 +61,21 @@ def _english_heavy(text: str) -> bool:
     return en > ko
 
 
-def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody=None):
+async def _synth_mp3(text: str, voice: str, mp3: Path, kw: dict) -> list[dict]:
+    """mp3 를 쓰면서 WordBoundary 마크를 모은다. offset 은 100ns 단위 → 초로 변환."""
+    marks = []
+    with open(mp3, "wb") as f:
+        # boundary 기본값이 SentenceBoundary 라 명시하지 않으면 WordBoundary 청크가 아예 안 옴.
+        async for chunk in edge_tts.Communicate(text, voice, boundary="WordBoundary", **kw).stream():
+            if chunk["type"] == "audio":
+                f.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                marks.append({"offset": chunk["offset"] / 1e7, "text": chunk.get("text", "")})
+    return marks
+
+
+def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody=None) -> list[dict]:
+    """텍스트 → wav(16k mono). 반환값은 단어 경계 마크 — 문장 시작 시각 계산에 쓴다."""
     # 영어 위주인데 한국어전용 음성을 골랐으면 멀티링구얼로 자동 스왑(립싱크는 언어 무관).
     if "Multilingual" not in voice and _english_heavy(text):
         voice = MULTI_VOICE
@@ -70,11 +85,34 @@ def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody
     kw = {"rate": f"{round(p.get('rate', 0) * 100):+d}%",
           "volume": f"{round(p.get('volume', 0) * 100):+d}%",
           "pitch": f"{round(p.get('pitch', 0) * 100):+d}Hz"}
-    asyncio.run(edge_tts.Communicate(text, voice, **kw).save(str(mp3)))
+    marks = asyncio.run(_synth_mp3(text, voice, mp3, kw))
     subprocess.run(["ffmpeg", "-y", "-i", str(mp3), "-ar", "16000", "-ac", "1",
                     "-c:a", "pcm_s16le", str(wav)], check=True, capture_output=True)
     if not keep_mp3:
         mp3.unlink()
+    return marks
+
+
+_NONWORD = re.compile(r"[^\w]", re.UNICODE)
+
+
+def sentence_starts(sentences: list[str], marks: list[dict]) -> list[float]:
+    """각 문장의 시작 시각(초). 단어 마크를 글자 수만큼 순서대로 배분한다.
+
+    edge-tts 는 문장 경계를 알려주지 않고 단어만 준다 — 문장의 (문장부호 제외) 글자 수를
+    채울 때까지 마크를 소비하는 방식으로 경계를 복원한다.
+    """
+    starts, i = [], 0
+    for s in sentences:
+        if i >= len(marks):
+            starts.append(starts[-1] if starts else 0.0)
+            continue
+        starts.append(marks[i]["offset"])
+        need, got = len(_NONWORD.sub("", s)), 0
+        while i < len(marks) and got < need:
+            got += len(_NONWORD.sub("", marks[i]["text"]))
+            i += 1
+    return starts
 
 
 def run_video_job(job_id: str, job: dict):
@@ -109,14 +147,24 @@ def rt_result(r: SpeakRtReq, job_id: str) -> dict:
     """Phase B: 텍스트 → mp3 + 블렌드셰이프 프레임 (퍼펫 렌더러용). 0.6초급이라 동기 처리."""
     wav = OUT / f"{job_id}.wav"
     try:
-        tts_to_wav(r.text, r.voice, wav, keep_mp3=True,
-                   prosody={"rate": r.rate, "pitch": r.pitch, "volume": r.volume})
+        marks = tts_to_wav(r.text, r.voice, wav, keep_mp3=True,
+                           prosody={"rate": r.rate, "pitch": r.pitch, "volume": r.volume})
         if r.engine == "a2f":
             import a2f_source as source  # lazy: 모듈/엔진은 첫 요청 때 로드
         else:
             import blendshape_source as source
         bs = source.audio_to_blendshapes(str(wav))
-        return {"audio_url": f"/media/{job_id}.mp3", **bs}
+        out = {"audio_url": f"/media/{job_id}.mp3", **bs}
+        # 문장 시작 시각 — 감정 전환용. llm_source 가 없거나 마크가 없으면 조용히 생략한다.
+        try:
+            import llm_source
+            sentences = llm_source.split_sentences(r.text)
+            if sentences and marks:
+                out["sentences"] = [{"text": s, "start": t}
+                                    for s, t in zip(sentences, sentence_starts(sentences, marks))]
+        except Exception:
+            pass
+        return out
     finally:
         wav.unlink(missing_ok=True)
 
