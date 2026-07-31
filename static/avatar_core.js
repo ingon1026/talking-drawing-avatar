@@ -102,6 +102,36 @@ window.AvatarCore = (() => {
     return w;
   }
 
+  // ---------- 엔진 출력 셰이핑 (발화당 1회) ----------
+  // A2F·NeuroSync 둘 다 턱을 거의 안 벌리고(jawOpen 최대 0.31~0.40 실측) 발화 내내 켜져 있는
+  // 편향 채널이 있다(A2F jawRight 평균 0.17, NeuroSync browInnerUp 0.145). 엔진 쪽에는 세기
+  // 손잡이가 없어서(A2F model.json 은 경로 설정뿐) 받은 프레임 전체를 여기서 정규화한다.
+  const SHAPE = {
+    a2f:       { gain: { jawopen: 1.9 }, kill: ["jawright", "jawleft"] },
+    neurosync: { gain: { jawopen: 2.4, mouthfunnel: 0.7 }, kill: [] },
+  };
+  const BASELINE_PCT = 10;   // 채널별 하위 백분위 = "상시 켜져 있는" 성분
+
+  function shapeAnim(anim, engine) {
+    const prof = SHAPE[engine];
+    if (!prof || !anim || !anim.frames || !anim.frames.length || !anim.index) return anim;
+    const kill = new Set(prof.kill);
+    for (const [name, col] of anim.index) {
+      if (kill.has(name)) {
+        for (const f of anim.frames) f[col] = 0;
+        continue;
+      }
+      const vals = anim.frames.map(f => f[col]);    // 스냅샷 — 아래서 f[col] 을 덮어써도 원본값 기준으로 계산
+      const base = vals.slice().sort((a, b) => a - b)[Math.floor((vals.length - 1) * BASELINE_PCT / 100)];
+      const gain = prof.gain[name] || 1;
+      if (!base && gain === 1) continue;            // 손댈 것 없는 채널은 건너뛴다
+      anim.frames.forEach((f, i) => {
+        f[col] = Math.min(1, Math.max(0, (vals[i] - base) * gain));
+      });
+    }
+    return anim;
+  }
+
   // ---------- 감정 프리셋 (studio3d 버전이 superset 이라 그것으로 통합) ----------
   const EMOTIONS = {
     neutral: {},
@@ -1111,7 +1141,7 @@ window.AvatarCore = (() => {
   }
 
   return {
-    norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim,
+    norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim, shapeAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
