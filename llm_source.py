@@ -15,6 +15,7 @@ import json
 import re
 import sys
 import time
+from functools import lru_cache
 
 import requests
 
@@ -145,6 +146,89 @@ def chat(text: str, history: list[dict] | None = None, persona: str | None = Non
     if not reply:
         reply = "잘 못 알아들었어요. 다시 말해 줄래요?"
     return {"reply": reply, "emotion": emotion if emotion in EMOTIONS else "neutral"}
+
+
+INTENSITY = {"low": 0.45, "mid": 0.70, "high": 1.0}
+
+CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {"emotions": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "emotion": {"type": "string", "enum": list(EMOTIONS)},
+            "intensity": {"type": "string", "enum": list(INTENSITY)},
+        },
+        "required": ["emotion", "intensity"],
+    }}},
+    "required": ["emotions"],
+}
+
+CLASSIFY_SYSTEM = (
+    "너는 문장의 감정을 분류한다.\n"
+    f"- 감정은 {', '.join(EMOTIONS)} 중 하나다. 뚜렷하지 않으면 neutral 을 쓴다.\n"
+    "- intensity 는 low, mid, high 중 하나다.\n"
+    "- 입력 문장 수와 정확히 같은 개수를, 입력 순서대로 출력한다.\n"
+    "- 문장을 다시 쓰거나 설명하지 않는다. 감정만 판단한다."
+)
+
+
+def classify(sentences: list[str]) -> list[dict]:
+    """문장 리스트 → [{"emo", "intensity"}] (입력과 같은 길이).
+
+    문장 분할은 호출측이 끝낸 상태로 들어온다 — 모델이 텍스트를 재작성해
+    원문과 어긋나는 사고를 막으려고 라벨링만 시킨다.
+    """
+    if not sentences:
+        return []
+    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
+    try:
+        r = requests.post(
+            API,
+            json={
+                "model": MODEL,
+                "messages": [{"role": "system", "content": CLASSIFY_SYSTEM},
+                             {"role": "user", "content": numbered}],
+                "stream": False,
+                "format": CLASSIFY_SCHEMA,
+                "keep_alive": KEEP_ALIVE,
+                # temperature 를 낮게: 분류는 창작이 아니다. num_predict 는 문장당 ~20토큰.
+                "options": {"num_ctx": NUM_CTX, "temperature": 0.2,
+                            "num_predict": 24 * len(sentences) + 32},
+            },
+            timeout=TIMEOUT,
+        )
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("대화 서버(Ollama)가 꺼져 있어요.")
+    except requests.exceptions.Timeout:
+        raise RuntimeError("감정 분류가 너무 늦어요.")
+    if not r.ok:
+        raise RuntimeError(f"감정 분류에 실패했어요. (Ollama {r.status_code})")
+
+    try:
+        arr = json.loads(r.json().get("message", {}).get("content", "")).get("emotions", [])
+    except (json.JSONDecodeError, AttributeError):
+        raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
+    # 스키마를 걸어도 형태를 방어한다 — 배열이 아니거나 원소가 객체가 아니면
+    # 아래 len()/e.get() 이 RuntimeError 밖에서 TypeError/AttributeError 로 터진다.
+    if not isinstance(arr, list):
+        raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
+    if len(arr) != len(sentences):
+        raise RuntimeError("감정 분류 결과 개수가 문장 수와 다릅니다.")
+
+    out = []
+    for e in arr:
+        if not isinstance(e, dict):
+            raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
+        emo = e.get("emotion")
+        out.append({"emo": emo if emo in EMOTIONS else "neutral",
+                    "intensity": INTENSITY.get(e.get("intensity"), 0.70)})
+    return out
+
+
+@lru_cache(maxsize=64)
+def classify_cached(sentences: tuple[str, ...]) -> tuple[dict, ...]:
+    """같은 문장 묶음 재요청은 모델을 다시 부르지 않는다 (쇼케이스·반복 시연)."""
+    return tuple(classify(list(sentences)))
 
 
 if __name__ == "__main__":
