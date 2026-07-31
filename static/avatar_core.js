@@ -69,6 +69,27 @@ window.AvatarCore = (() => {
     return { emo: best, intensity: Math.min(1, 0.45 + top * 0.16) };  // 0.45~1.0
   }
 
+  // ---------- LLM 감정 분류 (규칙 매칭의 상위 경로) ----------
+  // inferEmotion 정규식은 한국어 10문장 벤치에서 1/10 이었다 — 상주 LLM 에 물어본다.
+  // 실패·타임아웃·503 은 전부 null 로 접어서 호출측이 규칙으로 떨어지게 한다.
+  async function classifyEmotion(text, { timeoutMs = 4000 } = {}) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const res = await fetch("/api/emotion", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }), signal: ctl.signal,
+      });
+      if (!res.ok) return null;
+      const segs = (await res.json()).segments;
+      return Array.isArray(segs) && segs.length ? segs : null;
+    } catch {
+      return null;      // 오프라인·중단·파싱 실패 — 규칙 폴백
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ---------- 감정 → 목소리 톤 (얼굴만 웃고 목소리는 무표정한 괴리 해소) ----------
   // 비율값: rate=속도, pitch=음높이, volume=크기. edge-tts("+10%"/"+14Hz")와 브라우저 TTS(배수) 양쪽에서 사용.
   const VOICE_STYLE = {
@@ -534,6 +555,8 @@ window.AvatarCore = (() => {
   async function speakFlow({ text, voice, engine, audioEl, onAnim, prosody }) {
     const r = await speakRT({ text, voice, engine, prosody });
     const anim = { fps: r.fps, frames: r.frames, head: r.head, index: r.names.map((n, i) => [norm(n), i]) };
+    shapeAnim(anim, engine);          // 엔진 출력 정규화 (입 벌림·편향 제거)
+    anim.sentences = r.sentences;     // 문장 시작 시각 (없을 수 있음)
     if (onAnim) onAnim(anim);
     audioEl.src = r.audio_url;
     await audioEl.play();
@@ -541,16 +564,30 @@ window.AvatarCore = (() => {
   }
 
   // ---------- 감정 결정 + 발화 (puppet·studio3d 공용) ----------
-  // emotion 지정(LLM 판단) 있으면 그대로, 없으면 텍스트에서 추론. autoEmo(호출 시점 boolean) 켜져 있으면
+  // emotion 지정(LLM 판단) 있으면 그대로, 없으면 LLM 분류 → 실패 시 규칙 추론. autoEmo(호출 시점 boolean) 켜져 있으면
   // emo(makeEmotion 인스턴스) 프리셋 + 목소리 톤 적용 후 speakFlow. voice/engine 은 호출 시점 값.
   async function speakWithEmotion({ text, emotion, autoEmo, emo, voice, engine, audioEl, onAnim }) {
-    const r = emotion ? { emo: emotion, intensity: 0.9 } : inferEmotion(text);
+    let segs = null;
+    let r = emotion ? { emo: emotion, intensity: 0.9 } : null;
+    if (!r && autoEmo) {
+      // 직렬 호출: 목소리 톤(prosody)이 TTS 요청 파라미터라 감정을 먼저 알아야 한다.
+      segs = await classifyEmotion(text);
+      r = segs ? { emo: segs[0].emo, intensity: segs[0].intensity } : inferEmotion(text);
+    } else if (!r) {
+      r = inferEmotion(text);
+    }
     let prosody = null;
     if (r && autoEmo) {
       emo.setEmotion(r.emo, r.intensity, false);   // 자동 감정 — 발화 끝나면 중립 복귀
       prosody = voiceProsody(r.emo, r.intensity);
     }
-    return speakFlow({ text, voice, engine, audioEl, onAnim, prosody });
+    const anim = await speakFlow({ text, voice, engine, audioEl, onAnim, prosody });
+    // 문장별 감정 전환은 두 배열의 길이가 맞을 때만 (분할 결과가 같다는 전제 확인)
+    if (segs && anim.sentences && anim.sentences.length === segs.length) {
+      anim.emotionTrack = anim.sentences.map((s, i) => ({
+        start: s.start, emo: segs[i].emo, intensity: segs[i].intensity }));
+    }
+    return anim;
   }
 
   // ---------- 자동 쇼케이스 (첫 방문자 유휴 시 인사·감정 시연) ----------
@@ -1144,7 +1181,7 @@ window.AvatarCore = (() => {
   }
 
   return {
-    norm, inferEmotion, voiceProsody, smoothStep, weightsFromAnim, shapeAnim,
+    norm, inferEmotion, classifyEmotion, voiceProsody, smoothStep, weightsFromAnim, shapeAnim,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
