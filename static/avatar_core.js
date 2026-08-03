@@ -691,7 +691,7 @@ window.AvatarCore = (() => {
   ];
   function makeMirrorPanel(mirror, mount) {
     let lastFrame = -1;   // 마지막으로 캔버스에 그린 웹캠 프레임 번호
-    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">📊 비교군 — 내 얼굴 → MediaPipe 채널</div>';
+    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">비교군 — 내 얼굴 → MediaPipe 채널</div>';
     const cv = document.createElement("canvas");
     cv.width = 320; cv.height = 240;
     cv.style.cssText = "width:100%;border-radius:12px;border:1px solid #2a2a35;background:#0d0d12;display:block";
@@ -917,7 +917,7 @@ window.AvatarCore = (() => {
       video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       await video.play();
       Object.assign(st, { on: true, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0], head: null, hN: null, frame: 0 });
-      say("🪞 캘리브레이션 — 정면·무표정으로 잠시 계세요");
+      say("캘리브레이션 — 정면·무표정으로 잠시 계세요");
     }
     function stop() {
       st.on = false; st.w = null;
@@ -961,7 +961,7 @@ window.AvatarCore = (() => {
         st.samples.push(raw);
         if (g) st.gsamples.push(g);
         // 캘리브레이션 중 움직이면 중립이 오염되므로 진행 상황을 안내 (6프레임마다 갱신)
-        if (st.samples.length % 6 === 1) say(`🎯 정면을 보고 무표정을 유지해주세요… ${st.samples.length}/30`);
+        if (st.samples.length % 6 === 1) say(`정면을 보고 무표정을 유지해주세요… ${st.samples.length}/30`);
         if (st.samples.length < 30) return;
         const n = {};
         for (const k in raw) n[k] = st.samples.reduce((a, s) => a + (s[k] || 0), 0) / st.samples.length;
@@ -974,7 +974,7 @@ window.AvatarCore = (() => {
           : [0, 0];
         st.neutral = n;
         st.samples = null; st.gsamples = null;   // 캘리브레이션 끝 — 샘플 버퍼 해제
-        say("🪞 미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
+        say("미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
         return;
       }
       // 아이리스 시선 → eyeLook 8채널 합성 덮어쓰기 (블렌드셰이프 시선치는 거칠어서 대체).
