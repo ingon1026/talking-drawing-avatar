@@ -8,11 +8,43 @@
  * (2026-07-31 실제로 발생) — 코어 수정 후 `drawface-live/scripts/sync_avatar_core.sh` 를 돌릴 것.
  * 잊어도 drawface-live 의 Vendor sync 워크플로가 push·매일 잡아낸다.
  *
+ * 미러링 UI 문구는 한국어(기본)·영어를 함께 들고 있다 — 영어 페이지는 팩토리 호출 전에
+ * AvatarCore.setLocale("en") 을 한 번 부른다(안 부르면 기존과 동일한 한국어).
+ *
  * 일반 <script src> 로 로드되는 전역 스크립트이며 window.AvatarCore 를 정의한다.
  * 소비 페이지보다 먼저 로드할 것. 팩토리 함수들은 정의 시점에 DOM/전역에 접근하지 않고,
  * 페이지가 필요한 엘리먼트·접근자를 인자로 넘겨 호출한다.
  */
 window.AvatarCore = (() => {
+
+  // ---------- 로케일 (미러링 UI 문자열) ----------
+  // 코어를 공유하는 두 리포의 언어가 다르다: ~/face 는 한국어(국내용), drawface-live 는 영어(HF Space 공개).
+  // 페이지가 팩토리 호출 전에 AvatarCore.setLocale("en") 을 한 번 부른다. 기본값은 "ko".
+  // 화면에 뜨는 문자열만 여기 모은다 — EMO_RULES 정규식·쇼케이스 대사의 한국어는 UI 가 아니라
+  // 한국어 입력을 매칭·재생하는 데이터라 로케일과 무관하게 그대로 둔다.
+  const STRINGS = {
+    ko: {
+      mirrorLoading: "미러링 모델 로드 중…",
+      mirrorCalib: "캘리브레이션 — 정면·무표정으로 잠시 계세요",
+      mirrorCalibCount: n => `정면을 보고 무표정을 유지해주세요… ${n}/30`,
+      mirrorOn: "미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)",
+      panelTitle: "내 얼굴 — 트래킹 미리보기",
+      panelIdle: "미러링을 시작하면 표시됩니다",
+      radar: { mouth: "입", smile: "미소", pucker: "오므림", eye: "눈", brow: "눈썹" },
+    },
+    en: {
+      mirrorLoading: "Loading mirroring model…",
+      mirrorCalib: "Calibrating — hold a neutral, front-facing pose",
+      mirrorCalibCount: n => `Look straight ahead and keep a neutral face… ${n}/30`,
+      mirrorOn: "Mirroring — your character follows you (button to stop)",
+      panelTitle: "Your face — tracking preview",
+      panelIdle: "Appears once mirroring starts",
+      radar: { mouth: "Mouth", smile: "Smile", pucker: "Pucker", eye: "Eyes", brow: "Brows" },
+    },
+  };
+  let locale = "ko";
+  const T = () => STRINGS[locale];   // 호출 시점에 읽는다 — setLocale 이 늦게 와도 반영된다
+  function setLocale(loc) { locale = STRINGS[loc] ? loc : "ko"; }
 
   // ---------- 내부 유틸 ----------
   const norm = s => s.toLowerCase().replace(/[_\-\s]/g, "");
@@ -687,16 +719,17 @@ window.AvatarCore = (() => {
   //
   // 시선은 여기 없다. 크기가 아니라 방향(좌우·상하)이라 축 하나에 올릴 수 없고,
   // 메시 위 홍채 점이 이미 그 자체로 보여준다.
+  // 첫 원소는 라벨이 아니라 STRINGS[*].radar 의 키다 — 표시 문구는 로케일에서 온다.
   const RADAR_CHS = [
-    ["입", W => W("jawopen")],
-    ["미소", W => (W("mouthsmileleft") + W("mouthsmileright")) / 2],
-    ["오므림", W => W("mouthpucker")],
-    ["눈", W => (W("eyeblinkleft") + W("eyeblinkright")) / 2],
-    ["눈썹", W => W("browinnerup")],
+    ["mouth", W => W("jawopen")],
+    ["smile", W => (W("mouthsmileleft") + W("mouthsmileright")) / 2],
+    ["pucker", W => W("mouthpucker")],
+    ["eye", W => (W("eyeblinkleft") + W("eyeblinkright")) / 2],
+    ["brow", W => W("browinnerup")],
   ];
   function makeMirrorPanel(mirror, mount) {
     let lastFrame = -1;   // 마지막으로 미리보기에 그린 웹캠 프레임 번호
-    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">내 얼굴 — 트래킹 미리보기</div>';
+    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">' + T().panelTitle + '</div>';
     const cv = document.createElement("canvas");
     cv.width = 320; cv.height = 240;
     cv.style.cssText = "width:100%;border-radius:12px;border:1px solid #2a2a35;background:#0d0d12;display:block";
@@ -734,7 +767,7 @@ window.AvatarCore = (() => {
           ctx.fillStyle = "#0d0d12"; ctx.fillRect(0, 0, w, h);
           if (!mirror.on || !d.video || d.video.readyState < 2) {
             ctx.fillStyle = "#9a9ab0"; ctx.font = "13px sans-serif"; ctx.textAlign = "center";
-            ctx.fillText("미러링을 시작하면 표시됩니다", w / 2, h / 2);
+            ctx.fillText(T().panelIdle, w / 2, h / 2);
           } else {
             ctx.save(); ctx.scale(-1, 1); ctx.drawImage(d.video, -w, 0, w, h); ctx.restore();   // 거울 반전
             if (d.lm) {
@@ -772,7 +805,7 @@ window.AvatarCore = (() => {
         rc.fillStyle = "#9a9ab0"; rc.font = "13px sans-serif"; rc.textAlign = "center"; rc.textBaseline = "middle";
         for (let i = 0; i < N; i++) {
           const a = AX(i);
-          rc.fillText(RADAR_CHS[i][0], CX + Math.cos(a) * (R + 22), CY + Math.sin(a) * (R + 16));
+          rc.fillText(T().radar[RADAR_CHS[i][0]], CX + Math.cos(a) * (R + 22), CY + Math.sin(a) * (R + 16));
         }
       },
     };
@@ -936,7 +969,7 @@ window.AvatarCore = (() => {
 
     async function start() {
       if (!lm) {
-        say("미러링 모델 로드 중…");
+        say(T().mirrorLoading);
         const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17");
         const vision = await mp.FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm");
@@ -954,7 +987,7 @@ window.AvatarCore = (() => {
       video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       await video.play();
       Object.assign(st, { on: true, w: null, neutral: null, samples: [], gsamples: [], gN: [0, 0], head: null, hN: null, frame: 0 });
-      say("캘리브레이션 — 정면·무표정으로 잠시 계세요");
+      say(T().mirrorCalib);
     }
     function stop() {
       st.on = false; st.w = null;
@@ -998,7 +1031,7 @@ window.AvatarCore = (() => {
         st.samples.push(raw);
         if (g) st.gsamples.push(g);
         // 캘리브레이션 중 움직이면 중립이 오염되므로 진행 상황을 안내 (6프레임마다 갱신)
-        if (st.samples.length % 6 === 1) say(`정면을 보고 무표정을 유지해주세요… ${st.samples.length}/30`);
+        if (st.samples.length % 6 === 1) say(T().mirrorCalibCount(st.samples.length));
         if (st.samples.length < 30) return;
         const n = {};
         for (const k in raw) n[k] = st.samples.reduce((a, s) => a + (s[k] || 0), 0) / st.samples.length;
@@ -1011,7 +1044,7 @@ window.AvatarCore = (() => {
           : [0, 0];
         st.neutral = n;
         st.samples = null; st.gsamples = null;   // 캘리브레이션 끝 — 샘플 버퍼 해제
-        say("미러링 중 — 캐릭터가 따라합니다 (버튼으로 종료)");
+        say(T().mirrorOn);
         return;
       }
       // 아이리스 시선 → eyeLook 8채널 합성 덮어쓰기 (블렌드셰이프 시선치는 거칠어서 대체).
@@ -1259,6 +1292,6 @@ window.AvatarCore = (() => {
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
-    mountHead3D, applyMorphs, drawChar2D,
+    mountHead3D, applyMorphs, drawChar2D, setLocale,
   };
 })();
