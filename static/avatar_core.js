@@ -679,55 +679,101 @@ window.AvatarCore = (() => {
   // ---------- 분석 패널 (비교군): 내 얼굴 + 478점 랜드마크 + 구동 채널값 ----------
   // 어느 페이지든 컨테이너 하나 주면 동일 패널 — 스타일 인라인이라 페이지 CSS 의존 없음.
   // 반환된 draw(W) 를 렌더 루프에서 매 프레임 호출 (W = 채널 접근자). 컨테이너 숨김이면 즉시 반환.
-  // 미리보기 오버레이: 웹캠 + 얼굴 메시 + 홍채. 값 막대는 두지 않는다 —
-  // 채널 계수는 전송 데이터이지 화면에 읽히는 정보가 아니고(Live Link Face·VSeeFace 도
-  // 메시만 겹쳐 보여준다), 이 페이지는 구동된 캐릭터가 바로 옆에 있어 결과가 이미 보인다.
-  // 메시가 "어디를 어떻게 잡았는지", 캐릭터가 "그래서 이렇게 된다"를 각각 맡는다.
+  // 미리보기: 웹캠 + 얼굴 메시(어디를 잡았나) + 오각형(얼마나 움직였나).
+  // 값 막대를 쌓지 않는 이유 — 채널 계수는 전송 데이터이지 읽는 정보가 아니고(Live Link Face·
+  // VSeeFace 도 메시만 겹쳐 보여준다), 모델 내부 채널명·0.00 정밀도를 UI 에 노출하면 값을
+  // 그대로 렌더한 티가 난다. 대신 다섯 축이 한 덩어리로 일그러지는 모양을 보여준다:
+  // 개별 수치는 못 읽어도 "지금 살아서 반응한다"가 한눈에 들어온다.
+  //
+  // 시선은 여기 없다. 크기가 아니라 방향(좌우·상하)이라 축 하나에 올릴 수 없고,
+  // 메시 위 홍채 점이 이미 그 자체로 보여준다.
+  const RADAR_CHS = [
+    ["입", W => W("jawopen")],
+    ["미소", W => (W("mouthsmileleft") + W("mouthsmileright")) / 2],
+    ["오므림", W => W("mouthpucker")],
+    ["눈", W => (W("eyeblinkleft") + W("eyeblinkright")) / 2],
+    ["눈썹", W => W("browinnerup")],
+  ];
   function makeMirrorPanel(mirror, mount) {
-    let lastFrame = -1;   // 마지막으로 캔버스에 그린 웹캠 프레임 번호
+    let lastFrame = -1;   // 마지막으로 미리보기에 그린 웹캠 프레임 번호
     mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">내 얼굴 — 트래킹 미리보기</div>';
     const cv = document.createElement("canvas");
     cv.width = 320; cv.height = 240;
     cv.style.cssText = "width:100%;border-radius:12px;border:1px solid #2a2a35;background:#0d0d12;display:block";
     mount.appendChild(cv);
     const ctx = cv.getContext("2d");
+
+    const rv = document.createElement("canvas");
+    rv.width = 320; rv.height = 190;
+    rv.style.cssText = "width:100%;margin-top:8px;display:block";
+    mount.appendChild(rv);
+    const rc = rv.getContext("2d");
+    // 12시부터 시계방향. 축 순서를 바꾸면 같은 표정이 다른 모양이 되므로 고정이다.
+    const N = RADAR_CHS.length, CX = 160, CY = 96, R = 62;
+    const AX = i => -Math.PI / 2 + i * 2 * Math.PI / N;
+    const poly = (get, close) => {
+      rc.beginPath();
+      for (let i = 0; i < N; i++) {
+        const r = get(i), a = AX(i);
+        const x = CX + Math.cos(a) * r, y = CY + Math.sin(a) * r;
+        i ? rc.lineTo(x, y) : rc.moveTo(x, y);
+      }
+      if (close !== false) rc.closePath();
+    };
+
     return {
       canvas: cv,   // 동시 구동 화면의 녹화 합성용
-      draw() {
+      draw(W) {
         if (!mount.offsetParent) return;   // 숨김 상태 — 일 안 함
         const d = mirror.debug();
         // 웹캠 프레임이 그대로면 같은 그림을 다시 그리게 된다 — 렌더 루프(60~144fps)가
-        // 추론(~30fps)보다 빨라 4~5배 헛일이 된다.
-        if (d.frame === lastFrame && mirror.on) return;
-        lastFrame = d.frame;
-
-        const w = cv.width, h = cv.height;
-        ctx.fillStyle = "#0d0d12"; ctx.fillRect(0, 0, w, h);
-        if (!mirror.on || !d.video || d.video.readyState < 2) {
-          ctx.fillStyle = "#9a9ab0"; ctx.font = "13px sans-serif"; ctx.textAlign = "center";
-          ctx.fillText("미러링을 시작하면 표시됩니다", w / 2, h / 2);
-          return;
-        }
-        ctx.save(); ctx.scale(-1, 1); ctx.drawImage(d.video, -w, 0, w, h); ctx.restore();   // 거울 반전
-        if (!d.lm) return;
-        const X = i => (1 - d.lm[i].x) * w, Y = i => d.lm[i].y * h;   // 좌우 반전 좌표
-        if (d.mesh) {
-          // MediaPipe 표준 토폴로지를 한 경로로 모아 한 번에 stroke — 세그먼트가 2600개라
-          // 개별 stroke 면 프레임을 먹는다.
-          ctx.beginPath();
-          for (const c of d.mesh) {
-            const a = c.start ?? c[0], b = c.end ?? c[1];
-            ctx.moveTo(X(a), Y(a)); ctx.lineTo(X(b), Y(b));
+        // 추론(~30fps)보다 빨라 4~5배 헛일. 오각형은 값이 계속 변하므로 매 프레임 갱신한다.
+        if (d.frame !== lastFrame || !mirror.on) {
+          lastFrame = d.frame;
+          const w = cv.width, h = cv.height;
+          ctx.fillStyle = "#0d0d12"; ctx.fillRect(0, 0, w, h);
+          if (!mirror.on || !d.video || d.video.readyState < 2) {
+            ctx.fillStyle = "#9a9ab0"; ctx.font = "13px sans-serif"; ctx.textAlign = "center";
+            ctx.fillText("미러링을 시작하면 표시됩니다", w / 2, h / 2);
+          } else {
+            ctx.save(); ctx.scale(-1, 1); ctx.drawImage(d.video, -w, 0, w, h); ctx.restore();   // 거울 반전
+            if (d.lm) {
+              const X = i => (1 - d.lm[i].x) * w, Y = i => d.lm[i].y * h;
+              if (d.mesh) {
+                // MediaPipe 표준 토폴로지(2556 세그먼트)를 한 경로로 모아 한 번에 stroke —
+                // 개별 stroke 면 프레임을 먹는다.
+                ctx.beginPath();
+                for (const c of d.mesh) {
+                  const a = c.start ?? c[0], b = c.end ?? c[1];
+                  ctx.moveTo(X(a), Y(a)); ctx.lineTo(X(b), Y(b));
+                }
+                ctx.strokeStyle = "rgba(232,232,239,.22)"; ctx.lineWidth = 0.5; ctx.stroke();
+              } else {
+                ctx.fillStyle = "rgba(232,232,239,.5)";   // 구버전 tasks-vision 폴백
+                for (let i = 0; i < 468; i++) ctx.fillRect(X(i) - .5, Y(i) - .5, 1.5, 1.5);
+              }
+              ctx.fillStyle = "#ffb03a";   // 홍채 10점 = 시선 계산의 실제 입력
+              for (let i = 468; i < d.lm.length; i++) ctx.fillRect(X(i) - 1.5, Y(i) - 1.5, 3, 3);
+            }
           }
-          ctx.strokeStyle = "rgba(232,232,239,.22)"; ctx.lineWidth = 0.5; ctx.stroke();
-        } else {
-          // 토폴로지를 못 받은 경우(구버전 tasks-vision) 점으로 폴백
-          ctx.fillStyle = "rgba(232,232,239,.5)";
-          for (let i = 0; i < 468; i++) ctx.fillRect(X(i) - .5, Y(i) - .5, 1.5, 1.5);
         }
-        // 홍채 10점 — 시선 계산의 실제 입력이라 따로 강조한다
-        ctx.fillStyle = "#ffb03a";
-        for (let i = 468; i < d.lm.length; i++) ctx.fillRect(X(i) - 1.5, Y(i) - 1.5, 3, 3);
+
+        rc.clearRect(0, 0, rv.width, rv.height);
+        rc.strokeStyle = "rgba(232,232,239,.13)"; rc.lineWidth = 1;
+        for (const f of [0.5, 1]) { poly(() => R * f); rc.stroke(); }
+        rc.beginPath();
+        for (let i = 0; i < N; i++) { rc.moveTo(CX, CY); rc.lineTo(CX + Math.cos(AX(i)) * R, CY + Math.sin(AX(i)) * R); }
+        rc.stroke();
+
+        poly(i => Math.max(0, Math.min(1, RADAR_CHS[i][1](W))) * R);
+        rc.fillStyle = "rgba(255,176,58,.20)"; rc.fill();
+        rc.strokeStyle = "#ffb03a"; rc.lineWidth = 1.5; rc.stroke();
+
+        rc.fillStyle = "#9a9ab0"; rc.font = "11px sans-serif"; rc.textAlign = "center"; rc.textBaseline = "middle";
+        for (let i = 0; i < N; i++) {
+          const a = AX(i);
+          rc.fillText(RADAR_CHS[i][0], CX + Math.cos(a) * (R + 20), CY + Math.sin(a) * (R + 15));
+        }
       },
     };
   }

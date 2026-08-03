@@ -270,9 +270,9 @@ function render(now) {
   // 넘긴다 — 3D 모프용 보정이라 2D 픽셀 공식은 원래(증폭 전) 스케일 그대로 써야 함.
   // audio 재생 중일 때만 적용: 끝난 뒤엔 smooth.jawopen 이 미러(웹캠) 단독 값이 되므로,
   // 그때도 나누면 실제 미러링 입벌림까지 줄어드는 회귀가 생긴다.
-  // 아래에서 W 를 쓰는 모든 지점보다 먼저 반영해야 한다.
+  // W 가 이 값을 읽으므로 W 를 처음 쓰는 지점(mpanel.draw) 전에 반영해야 한다.
   jawGain = (anim && !audio.paused && !audio.ended) ? (anim.jawGain || 1) : 1;
-  mpanel.draw();    // 트래킹 미리보기
+  mpanel.draw(W);   // 트래킹 미리보기
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
   const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };
