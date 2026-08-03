@@ -704,12 +704,12 @@ window.AvatarCore = (() => {
     const ctx = cv.getContext("2d");
 
     const rv = document.createElement("canvas");
-    rv.width = 320; rv.height = 190;
+    rv.width = 320; rv.height = 218;
     rv.style.cssText = "width:100%;margin-top:8px;display:block";
     mount.appendChild(rv);
     const rc = rv.getContext("2d");
     // 12시부터 시계방향. 축 순서를 바꾸면 같은 표정이 다른 모양이 되므로 고정이다.
-    const N = RADAR_CHS.length, CX = 160, CY = 96, R = 62;
+    const N = RADAR_CHS.length, CX = 160, CY = 118, R = 90;
     const AX = i => -Math.PI / 2 + i * 2 * Math.PI / N;
     const poly = (get, close) => {
       rc.beginPath();
@@ -769,10 +769,10 @@ window.AvatarCore = (() => {
         rc.fillStyle = "rgba(255,176,58,.20)"; rc.fill();
         rc.strokeStyle = "#ffb03a"; rc.lineWidth = 1.5; rc.stroke();
 
-        rc.fillStyle = "#9a9ab0"; rc.font = "11px sans-serif"; rc.textAlign = "center"; rc.textBaseline = "middle";
+        rc.fillStyle = "#9a9ab0"; rc.font = "13px sans-serif"; rc.textAlign = "center"; rc.textBaseline = "middle";
         for (let i = 0; i < N; i++) {
           const a = AX(i);
-          rc.fillText(RADAR_CHS[i][0], CX + Math.cos(a) * (R + 20), CY + Math.sin(a) * (R + 15));
+          rc.fillText(RADAR_CHS[i][0], CX + Math.cos(a) * (R + 22), CY + Math.sin(a) * (R + 16));
         }
       },
     };
