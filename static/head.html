@@ -158,7 +158,7 @@ function render(now) {
 
   smooth = {};
   mirror.apply(smooth, now);   // 웹캠 표정 채널
-  mpanel.draw(W);   // 비교군 패널
+  mpanel.draw();    // 트래킹 미리보기
   const blink = Math.max(blinker.value(now), W("eyeblinkleft"), W("eyeblinkright"));
 
   AvatarCore.applyMorphs(mounted.morphMeshes, smooth, blink);

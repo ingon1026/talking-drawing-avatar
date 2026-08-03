@@ -211,7 +211,7 @@ function render(now) {
 
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
   mirror.apply(smooth, now);
-  mpanel.draw(W);   // 비교군 패널
+  mpanel.draw();    // 트래킹 미리보기
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);

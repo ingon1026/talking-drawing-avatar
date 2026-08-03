@@ -679,67 +679,55 @@ window.AvatarCore = (() => {
   // ---------- 분석 패널 (비교군): 내 얼굴 + 478점 랜드마크 + 구동 채널값 ----------
   // 어느 페이지든 컨테이너 하나 주면 동일 패널 — 스타일 인라인이라 페이지 CSS 의존 없음.
   // 반환된 draw(W) 를 렌더 루프에서 매 프레임 호출 (W = 채널 접근자). 컨테이너 숨김이면 즉시 반환.
-  const PANEL_CHS = [
-    ["입 벌림 jawOpen", W => W("jawopen")],
-    ["미소 mouthSmile", W => (W("mouthsmileleft") + W("mouthsmileright")) / 2],
-    ["오므림 mouthPucker", W => W("mouthpucker")],
-    ["눈 감음 eyeBlink", W => (W("eyeblinkleft") + W("eyeblinkright")) / 2],
-    ["눈썹 browInnerUp", W => W("browinnerup")],
-    // 시선 2개는 makeGaze 와 동일 결합식 — 홍채 트래킹 결과가 그대로 보인다 (양방향 막대)
-    ["시선 가로 eyeLookX", W => (W("eyelookoutright") + W("eyelookinleft") - W("eyelookoutleft") - W("eyelookinright")) / 2, true],
-    ["시선 세로 eyeLookY", W => (W("eyelookdownleft") + W("eyelookdownright") - W("eyelookupleft") - W("eyelookupright")) / 2, true],
-  ];
+  // 미리보기 오버레이: 웹캠 + 얼굴 메시 + 홍채. 값 막대는 두지 않는다 —
+  // 채널 계수는 전송 데이터이지 화면에 읽히는 정보가 아니고(Live Link Face·VSeeFace 도
+  // 메시만 겹쳐 보여준다), 이 페이지는 구동된 캐릭터가 바로 옆에 있어 결과가 이미 보인다.
+  // 메시가 "어디를 어떻게 잡았는지", 캐릭터가 "그래서 이렇게 된다"를 각각 맡는다.
   function makeMirrorPanel(mirror, mount) {
     let lastFrame = -1;   // 마지막으로 캔버스에 그린 웹캠 프레임 번호
-    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">비교군 — 내 얼굴 → MediaPipe 채널</div>';
+    mount.innerHTML = '<div style="font-size:.85rem;font-weight:600;color:#9a9ab0;margin:2px 0 8px">내 얼굴 — 트래킹 미리보기</div>';
     const cv = document.createElement("canvas");
     cv.width = 320; cv.height = 240;
     cv.style.cssText = "width:100%;border-radius:12px;border:1px solid #2a2a35;background:#0d0d12;display:block";
     mount.appendChild(cv);
     const ctx = cv.getContext("2d");
-    const bars = PANEL_CHS.map(([label, , bipolar]) => {
-      const row = document.createElement("div");
-      row.style.cssText = "margin-top:7px;font-size:.76rem;color:#9a9ab0";
-      row.innerHTML = `<span>${label}</span><span style="float:right;color:#e8e8ef;font-variant-numeric:tabular-nums"></span>`
-        + '<div style="height:8px;background:#23232e;border-radius:4px;position:relative;margin-top:3px"><div style="position:absolute;top:0;bottom:0;background:#5b8cff;border-radius:4px"></div></div>';
-      mount.appendChild(row);
-      return { val: row.children[1], fill: row.querySelector("div>div"), bipolar };
-    });
     return {
       canvas: cv,   // 동시 구동 화면의 녹화 합성용
-      draw(W) {
+      draw() {
         if (!mount.offsetParent) return;   // 숨김 상태 — 일 안 함
         const d = mirror.debug();
         // 웹캠 프레임이 그대로면 같은 그림을 다시 그리게 된다 — 렌더 루프(60~144fps)가
-        // 추론(~30fps)보다 빨라 4~5배 헛일이 된다. 채널 막대는 값이 바뀔 수 있어 계속 갱신.
-        const fresh = d.frame !== lastFrame;
+        // 추론(~30fps)보다 빨라 4~5배 헛일이 된다.
+        if (d.frame === lastFrame && mirror.on) return;
         lastFrame = d.frame;
-        if (fresh || !mirror.on) {
+
         const w = cv.width, h = cv.height;
         ctx.fillStyle = "#0d0d12"; ctx.fillRect(0, 0, w, h);
         if (!mirror.on || !d.video || d.video.readyState < 2) {
           ctx.fillStyle = "#9a9ab0"; ctx.font = "13px sans-serif"; ctx.textAlign = "center";
           ctx.fillText("미러링을 시작하면 표시됩니다", w / 2, h / 2);
-        } else {
-          ctx.save(); ctx.scale(-1, 1); ctx.drawImage(d.video, -w, 0, w, h); ctx.restore();   // 거울 반전
-          if (d.lm) {
-            ctx.fillStyle = "rgba(91,140,255,.85)";
-            for (let i = 0; i < 468; i++) ctx.fillRect((1 - d.lm[i].x) * w - .5, d.lm[i].y * h - .5, 1.5, 1.5);
-            ctx.fillStyle = "#ffb03a";   // 홍채 10점 = 시선 계산 입력
-            for (let i = 468; i < d.lm.length; i++) ctx.fillRect((1 - d.lm[i].x) * w - 1.5, d.lm[i].y * h - 1.5, 3, 3);
-          }
+          return;
         }
-        }   // fresh 블록 끝 — 아래 채널 막대는 매 프레임 갱신(값이 계속 변한다)
-        PANEL_CHS.forEach(([, get, bipolar], i) => {
-          const v = get(W), b = bars[i];
-          b.val.textContent = v.toFixed(2);
-          if (bipolar) {
-            const p = Math.max(-1, Math.min(1, v)) * 50;
-            b.fill.style.left = p < 0 ? 50 + p + "%" : "50%";
-            b.fill.style.width = Math.abs(p) + "%";
-            b.fill.style.background = "#ffb03a";
-          } else { b.fill.style.left = "0"; b.fill.style.width = Math.min(1, v) * 100 + "%"; }
-        });
+        ctx.save(); ctx.scale(-1, 1); ctx.drawImage(d.video, -w, 0, w, h); ctx.restore();   // 거울 반전
+        if (!d.lm) return;
+        const X = i => (1 - d.lm[i].x) * w, Y = i => d.lm[i].y * h;   // 좌우 반전 좌표
+        if (d.mesh) {
+          // MediaPipe 표준 토폴로지를 한 경로로 모아 한 번에 stroke — 세그먼트가 2600개라
+          // 개별 stroke 면 프레임을 먹는다.
+          ctx.beginPath();
+          for (const c of d.mesh) {
+            const a = c.start ?? c[0], b = c.end ?? c[1];
+            ctx.moveTo(X(a), Y(a)); ctx.lineTo(X(b), Y(b));
+          }
+          ctx.strokeStyle = "rgba(232,232,239,.22)"; ctx.lineWidth = 0.5; ctx.stroke();
+        } else {
+          // 토폴로지를 못 받은 경우(구버전 tasks-vision) 점으로 폴백
+          ctx.fillStyle = "rgba(232,232,239,.5)";
+          for (let i = 0; i < 468; i++) ctx.fillRect(X(i) - .5, Y(i) - .5, 1.5, 1.5);
+        }
+        // 홍채 10점 — 시선 계산의 실제 입력이라 따로 강조한다
+        ctx.fillStyle = "#ffb03a";
+        for (let i = 468; i < d.lm.length; i++) ctx.fillRect(X(i) - 1.5, Y(i) - 1.5, 3, 3);
       },
     };
   }
@@ -906,6 +894,9 @@ window.AvatarCore = (() => {
         const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17");
         const vision = await mp.FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm");
+        // 얼굴 메시 토폴로지는 MediaPipe 가 상수로 들고 있다 — 우리가 삼각분할할 필요가 없다.
+        // 미리보기 오버레이(makeMirrorPanel)가 debug().mesh 로 받아 선으로 그린다.
+        st.mesh = mp.FaceLandmarker.FACE_LANDMARKS_TESSELATION || null;
         lm = await mp.FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
           runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
@@ -1011,7 +1002,7 @@ window.AvatarCore = (() => {
       // 페이지가 켤지 말지만 결정한다 — 축 매핑은 페이지 몫, 부호(거울 방향)는 전 페이지 공통이라 여기서.
       head: () => st.head && st.head.map((v, i) => HEAD_SIGN[i] * v),
       // 분석 패널용: 원본 비디오 + 478점 랜드마크 + 캘리브레이션된 채널값(캐릭터 구동값과 동일)
-      debug: () => ({ video, lm: st.lm, w: st.w, frame: st.frame }),
+      debug: () => ({ video, lm: st.lm, w: st.w, frame: st.frame, mesh: st.mesh }),
     };
   }
 
