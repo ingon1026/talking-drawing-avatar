@@ -4,7 +4,9 @@
  * docs/avatar_core.js 는 이 파일의 복사본이다 — 수정 후 반드시
  *     cp static/avatar_core.js docs/
  * 로 동기화할 것. (app.py 기동 시 두 사본 해시를 비교해 불일치를 경고한다.)
- * drawface-live/docs/ 에도 vendored 사본이 있다 — 코어 수정 시 그쪽도 cp 로 갱신.
+ * drawface-live/docs/ 에도 vendored 사본이 있다. 그쪽은 위 해시 검증 밖이라 조용히 뒤처진다
+ * (2026-07-31 실제로 발생) — 코어 수정 후 `drawface-live/scripts/sync_avatar_core.sh` 를 돌릴 것.
+ * 잊어도 drawface-live 의 Vendor sync 워크플로가 push·매일 잡아낸다.
  *
  * 일반 <script src> 로 로드되는 전역 스크립트이며 window.AvatarCore 를 정의한다.
  * 소비 페이지보다 먼저 로드할 것. 팩토리 함수들은 정의 시점에 DOM/전역에 접근하지 않고,
