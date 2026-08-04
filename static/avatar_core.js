@@ -871,47 +871,39 @@ window.AvatarCore = (() => {
   }
   let _partsRef = null, _ctxRef = null;   // drawBrow/drawEyes 가 쓰는 프레임 지역 참조
 
-  // 연속 눈꺼풀 렌더. lid 0~1 을 두 스프라이트의 알파 크로스페이드 + 뜬 눈의 세로 눌림으로
-  // 표현한다 — 중간값에서 "반쯤 감긴 눈"이 실제로 보이게 하려면 둘 다 필요하다
-  // (크로스페이드만 하면 두 눈이 겹쳐 보이고, 스케일만 하면 감은 눈 선이 안 나온다).
-  function drawEyes(ctx, parts, drawXY, lid, gaze, manifest, wide = 0) {
+  // 연속 눈꺼풀 렌더. 눈을 세로로 눌러봤더니 눈알(흰자·눈동자)까지 같이 찌그러져
+  // 졸린 눈처럼 기괴해졌다 — 실제 눈은 눈알이 찌그러지는 게 아니라 눈꺼풀이 위에서
+  // 가린다. 그래서 스케일이 아니라 클립으로 위쪽을 잘라낸다. base 는 눈이 지워진
+  // 상태(주변색으로 메움)라 잘린 자리에 피부색이 그대로 드러난다.
+  function drawEyes(ctx, parts, drawXY, lid, gaze, manifest) {
     const draw = (n, dy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dy);
     if (lid >= 0.995) { draw("eye_L_closed"); draw("eye_R_closed"); return; }
-    const [ex, ey] = manifest.eyeCenter || [256, 258];
-    // eyeWide 는 눈을 세로로 키운다 — 놀람·무서움이 다른 감정과 구분되는 가장 강한 신호인데
-    // 예전엔 이 채널이 픽셀에 아무 영향이 없었다(EMOTIONS 에만 존재).
-    if (wide > 0.01 && lid <= 0.01) {
-      ctx.save();
-      ctx.translate(ex, ey); ctx.scale(1, 1 + wide * 0.45); ctx.translate(-ex, -ey);
-      draw("eye_L_open"); draw("eye_R_open");
-      const pr0 = manifest.pupilRange || 0;
-      drawXY("pupil_L", gaze[0] * pr0, gaze[1] * pr0); drawXY("pupil_R", gaze[0] * pr0, gaze[1] * pr0);
-      ctx.restore();
-      return;
-    }
-    if (lid > 0.01) {   // 뜬 눈을 눈 중심 기준으로 세로로 눌러 부분 감김을 만든다
-      ctx.save();
-      ctx.translate(ex, ey); ctx.scale(1, Math.max(0.06, 1 - lid)); ctx.translate(-ex, -ey);
-      ctx.globalAlpha = 1;
+    const [, ey] = manifest.eyeCenter || [256, 258];
+    const eh = manifest.eyeHalf || 26;
+    const drawOpen = () => {
       draw("eye_L_open"); draw("eye_R_open");
       const pr = manifest.pupilRange || 0;
       drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
-      ctx.restore();
-      // 감은 눈 선은 뜬 눈보다 20~25px 아래(눈꺼풀이 내려온 자리)에 그려져 있어 원위치로
-      // 겹쳐야 한다 — 위 스케일 안에 넣으면 같이 납작해져 눈꺼풀 인상이 사라진다.
-      // 대신 깊게 감길 때만 섞는다. 예전엔 alpha=lid 라 눈웃음(lid≈0.4)에서도 나와
-      // 눌린 눈 아래에 반달 잔상이 떴다.
-      const seal = clamp01((lid - 0.6) / 0.4);
-      if (seal > 0.01) {
-        ctx.globalAlpha = seal;
-        draw("eye_L_closed"); draw("eye_R_closed");
-        ctx.globalAlpha = 1;
-      }
-      return;
+    };
+    if (lid <= 0.01) { drawOpen(); return; }
+    ctx.save();
+    // 눈알을 아래로 밀고 원래 눈 하단에서 잘라낸다 — 위 눈꺼풀이 덮어 내려오는 모습.
+    // 위쪽을 그냥 잘라내면 눈 테두리(굵은 선)까지 사라져 눈이 뻥 뚫려 보였다.
+    ctx.beginPath();
+    ctx.rect(0, 0, ctx.canvas.width, ey + eh);
+    ctx.clip();
+    ctx.translate(0, lid * eh * 1.5);
+    drawOpen();
+    ctx.restore();
+    // 감은 눈 선은 뜬 눈보다 20~25px 아래(눈꺼풀이 내려온 자리)에 그려져 있다. 깊게
+    // 감길 때만 섞는다 — alpha=lid 로 그대로 겹치던 시절엔 눈웃음(lid≈0.4)에서도 나와
+    // 눈 아래에 반달 잔상이 떴다.
+    const seal = clamp01((lid - 0.6) / 0.4);
+    if (seal > 0.01) {
+      ctx.globalAlpha = seal;
+      draw("eye_L_closed"); draw("eye_R_closed");
+      ctx.globalAlpha = 1;
     }
-    draw("eye_L_open"); draw("eye_R_open");
-    const pr = manifest.pupilRange || 0;
-    drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
   }
 
   // 눈썹 + 눈 (파츠 스프라이트 기반). drawChar2D 와 puppet.html 이 함께 쓴다 —
@@ -934,7 +926,7 @@ window.AvatarCore = (() => {
     const squint = (W("eyesquintleft") + W("eyesquintright")) / 2;
     const wide = (W("eyewideleft") + W("eyewideright")) / 2;
     const lid = clamp01(Math.max(blink, squint * 0.8) - wide * 0.35);
-    drawEyes(ctx, parts, drawXY, lid, gaze, manifest, wide);
+    drawEyes(ctx, parts, drawXY, lid, gaze, manifest);
   }
 
   function drawChar2D(ctx, { parts, manifest, W, blink, gaze, warp, clearBg = true, head }) {
