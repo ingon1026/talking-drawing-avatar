@@ -871,55 +871,154 @@ window.AvatarCore = (() => {
   }
   let _partsRef = null, _ctxRef = null;   // drawBrow/drawEyes 가 쓰는 프레임 지역 참조
 
-  // 눈 스프라이트에서 '잉크'(어두운 픽셀)의 bbox. 캐릭터당 1회 계산해 캐싱한다.
+  // 눈 스프라이트의 열별 프로파일. 캐릭터당 1회 계산해 캐싱한다.
   //
-  // 알파 bbox 를 쓰면 안 된다 — 빌더가 클릭 좌표 ±고정반경 정사각형을 통째로 잘라 넣어서
-  // 알파 경계가 곧 클릭 박스이고, 실제 눈보다 크다(돼지 24px 상자에 점은 11px, 실눈 31px
-  // 상자에 선은 17px 이고 상단이 13px 아래에 있다). 하단 피벗 압축은 '실제 눈의 하단'을
-  // 알아야 하므로 잉크 기준이어야 한다. 임계 r+g+b<300 은 자매 리포 drawface-live 의
-  // snapToInk 와 같은 값.
-  const _inkCache = new WeakMap();
-  function inkBox(img) {
-    const hit = _inkCache.get(img);
+  // 알파 bbox 를 쓰면 안 된다 — 빌더가 클릭 좌표 ±반경 사각형을 통째로 잘라 넣어서 알파
+  // 경계가 곧 클릭 상자이고 실제 눈과 다르다. 그래서 잉크(어두운 픽셀)를 기준으로 잡되,
+  // 최대 연결성분만 남긴다 — 소녀 캐릭터는 앞머리 획 141px 이 눈 상자에 걸쳐 있어
+  // 잉크 bbox 가 58px 로 부풀고 눈이 14% 과압축됐다. 그 획은 눈이 아니므로 화면에는
+  // 그대로 두되 애니메이션만 안 받는 게 맞다.
+  //
+  // 화풍은 두 지표로 갈린다(실측): 열마다 잉크가 끊겨 여러 런이 되는 비율(=내부가 비었다),
+  // 그리고 채움률. 만화눈 0.84/0.29, 점눈 0.00/0.69~0.78, 실눈 0.00/0.43~0.47 로
+  // 마진이 넓다.
+  const MIN_VIS = 3;          // 완전히 감겨도 남기는 최소 높이(px) — 눈이 아주 사라지지 않게
+  const _profCache = new WeakMap();
+  function eyeProfile(img) {
+    const hit = _profCache.get(img);
     if (hit !== undefined) return hit;
-    let box = null;
-    try {
-      const c = document.createElement("canvas");
-      c.width = img.width; c.height = img.height;
-      const cx = c.getContext("2d", { willReadFrequently: true });
-      cx.drawImage(img, 0, 0);
-      const d = cx.getImageData(0, 0, c.width, c.height).data;
-      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
-      for (let y = 0; y < c.height; y++) {
-        for (let x = 0; x < c.width; x++) {
-          const i = (y * c.width + x) * 4;
-          if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] < 300) {
-            if (x < x0) x0 = x;
-            if (x > x1) x1 = x;
-            if (y < y0) y0 = y;
-            if (y > y1) y1 = y;
-          }
-        }
-      }
-      if (x1 >= 0) box = [x0, y0, x1 + 1, y1 + 1];
-    } catch { /* 크로스오리진 등으로 픽셀을 못 읽으면 폴백 */ }
-    _inkCache.set(img, box);
-    return box;
+    let prof = null;
+    try { prof = _buildProfile(img); } catch { /* 픽셀을 못 읽으면 폴백 */ }
+    _profCache.set(img, prof);
+    return prof;
   }
 
-  // 눈 스프라이트를 잉크 bbox 하단에 고정한 채 세로로 압축해 그린다.
-  // Live2D 표준 눈 깜빡임이 "윗속눈썹을 아래속눈썹 위치까지 내리는" 변형이고,
-  // 자매 리포 drawface-live 의 deriveHalfEye(derive.js:212) 가 같은 기하를 쓴다.
-  // 중심 피벗 스케일(눈알까지 찌그러짐)·위쪽 클립(테두리선 소실)·아래로 밀기(실눈 토막)를
-  // 차례로 시도하다 도달한 형태 — 화풍을 판별하지 않고 각 화풍다운 결과를 낸다.
-  function squashEye(ctx, img, lid) {
-    const b = inkBox(img);
-    if (!b) { ctx.drawImage(img, 0, 0); return null; }   // 잉크 없음 → 원본 그대로
-    const [x0, y0, x1, y1] = b;
-    const w = x1 - x0, h = y1 - y0;
-    const nh = Math.max(1, h * (1 - lid));
-    ctx.drawImage(img, x0, y0, w, h, x0, y1 - nh, w, nh);
-    return [x0, y1 - nh, w, nh];
+  function _buildProfile(img) {
+    const W = img.width, H = img.height;
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    const cx = c.getContext("2d", { willReadFrequently: true });
+    cx.drawImage(img, 0, 0);
+    const d = cx.getImageData(0, 0, W, H).data;
+    const ink = new Uint8Array(W * H);
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let i = 0, p = 0; p < W * H; p++, i += 4) {
+      if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] < 300) {
+        ink[p] = 1;
+        const x = p % W, y = (p / W) | 0;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    if (x1 < 0) return null;
+
+    // 최대 연결성분(8-이웃)만 남긴다
+    const lab = new Int32Array(W * H).fill(-1);
+    const stack = [];
+    let best = -1, bestN = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const s = y * W + x;
+        if (!ink[s] || lab[s] >= 0) continue;
+        const id = s;
+        let n = 0;
+        stack.push(s); lab[s] = id;
+        while (stack.length) {
+          const q = stack.pop(); n++;
+          const qx = q % W, qy = (q / W) | 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = qx + dx, ny = qy + dy;
+              if (nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+              const t = ny * W + nx;
+              if (ink[t] && lab[t] < 0) { lab[t] = id; stack.push(t); }
+            }
+          }
+        }
+        if (n > bestN) { bestN = n; best = id; }
+      }
+    }
+    if (best < 0) return null;
+
+    // 열별 최상단/최하단 + 최상단 런 두께, 그리고 분류 지표
+    const top = new Int16Array(W).fill(-1), bot = new Int16Array(W).fill(-1);
+    const cap = new Int16Array(W);
+    let cols = 0, multi = 0, area = 0, cy0 = H, cy1 = -1;
+    for (let x = x0; x <= x1; x++) {
+      let first = -1, last = -1, runs = 0, capH = 0, prev = -2;
+      for (let y = y0; y <= y1; y++) {
+        if (lab[y * W + x] !== best) continue;
+        if (first < 0) first = y;
+        last = y; area++;
+        if (y !== prev + 1) runs++;
+        if (runs === 1) capH++;
+        prev = y;
+      }
+      if (first < 0) continue;
+      cols++; if (runs > 1) multi++;
+      top[x] = first; bot[x] = last; cap[x] = capH;
+      if (first < cy0) cy0 = first;
+      if (last > cy1) cy1 = last;
+    }
+    if (!cols) return null;
+
+    const multiRatio = multi / cols;
+    const fill = area / ((x1 - x0 + 1) * (cy1 - cy0 + 1));
+    // 윤곽눈: 내부(흰자)가 있어 열이 끊긴다 → 위 테두리만 눈꺼풀로 내린다
+    // 덩어리눈: 전부 칠해진 점 → 지킬 선이 없으니 통째로 가려진다
+    // 선눈: 획 자체가 그림이다 → 굵기를 지켜야 하므로 움직이지 않는다
+    const cls = multiRatio >= 0.4 ? "outline" : (fill >= 0.6 ? "blob" : "line");
+
+    const travel = new Int16Array(W);
+    let anyTravel = 0;
+    for (let x = x0; x <= x1; x++) {
+      if (top[x] < 0) continue;
+      const h = bot[x] - top[x] + 1;
+      const keep = cls === "line" ? h : (cls === "blob" ? 0 : cap[x]);
+      const t = Math.max(0, h - Math.max(keep, MIN_VIS));
+      travel[x] = t;
+      if (t > 0) anyTravel = 1;
+    }
+    const capsSorted = [];
+    for (let x = x0; x <= x1; x++) if (top[x] >= 0) capsSorted.push(cap[x]);
+    capsSorted.sort((a, b) => a - b);
+    const capMed = capsSorted[capsSorted.length >> 1] || MIN_VIS;
+    return { x0, x1, top0: cy0, bot1: cy1 + 1, top, bot, cap, capMed, travel, cls, anyTravel };
+  }
+
+  // 눈꺼풀이 내려오는 렌더. 눈알을 누르지 않고 **가리되**, 가려진 자리에 그 그림 자신의
+  // 윗선(캡)을 다시 그린다. Live2D 가 "윗속눈썹을 아래속눈썹 위치까지 내린다"고 한 게
+  // 이 '다시 그리기'다 — 균일 압축은 선 굵기를 파괴해서(실눈 획 6.4px → 1px 이하)
+  // 화풍을 못 지킨다.
+  //
+  // 캡의 도착 하단 = top + travel + cap = bot 이라 완전히 감긴 눈의 선은 그 그림 자신의
+  // 아랫 윤곽을 정확히 따라간다. manifest 값도 튜닝 상수도 개입하지 않는다.
+  function occludeEye(dst, img, lid) {
+    const p = eyeProfile(img);
+    if (!p || !p.anyTravel || lid <= 0.01) { dst.drawImage(img, 0, 0); return; }
+
+    if (p.cls === "outline") {
+      // 흰자가 있는 눈은 눈알째 눌러 내린다. 열별로 가리기만 하면 흰자가 뚫려
+      // '빈 테두리 원'이 되고 눈꺼풀이 내려오는 인상이 안 난다 — 눈알이 눈꺼풀 뒤로
+      // 들어가는 걸 흉내내는 쪽이 이 화풍에 맞는다(자매 리포 deriveHalfEye 와 같은 기하).
+      const w = p.x1 - p.x0 + 1, h = p.bot1 - p.top0;
+      // 최소 높이를 테두리 두께로 — 1px 까지 누르면 눈 하단의 흰자 한 줄만 남아
+      // 감은 눈 자리에 흰 선이 그어진다. 테두리 두께면 그 화풍의 선 색으로 닫힌다.
+      const nh = Math.max(p.capMed, h * (1 - lid));
+      dst.drawImage(img, p.x0, p.top0, w, h, p.x0, p.bot1 - nh, w, nh);
+      return;
+    }
+    // 점·선 눈은 눌러도 지킬 내부가 없다. 위에서 가리기만 해 획 굵기를 보존한다 —
+    // 균일 압축은 실눈 획 6.4px 를 1px 이하로 만들어 화풍을 지우다시피 했다.
+    dst.drawImage(img, 0, 0);
+    for (let x = p.x0; x <= p.x1; x++) {
+      if (p.top[x] < 0 || !p.travel[x]) continue;
+      // 정수 — 서브픽셀 리샘플은 가는 선을 프레임마다 깜박이게 한다
+      const gone = Math.round(lid * p.travel[x]);
+      if (gone > 0) dst.clearRect(x, p.top[x], 1, gone);
+    }
   }
 
   function drawEyes(ctx, parts, drawXY, lid, gaze, manifest) {
@@ -934,19 +1033,22 @@ window.AvatarCore = (() => {
     for (const side of ["L", "R"]) {
       const eye = parts[`eye_${side}_open`], pupil = parts[`pupil_${side}`];
       if (!eye) continue;
-      if (!pupil) { squashEye(ctx, eye, lid); continue; }
-      // 눈동자는 압축하지 않는다 — 같이 누르면 동공이 타원이 돼 졸린 눈처럼 보인다.
+      if (!pupil) { occludeEye(ctx, eye, lid); continue; }
+      // 눈동자는 변형하지 않는다 — 같이 누르면 동공이 타원이 돼 졸린 눈처럼 보인다.
       // Live2D·Character Animator 모두 눈동자를 흰자로 '클리핑'할 뿐 변형하지 않는다.
       const off = _offscreen(ctx.canvas.width, ctx.canvas.height);
-      squashEye(off, eye, lid);
-      off.globalCompositeOperation = "source-atop";   // 압축된 눈 알파 안에만 남는다
+      occludeEye(off, eye, lid);
+      off.globalCompositeOperation = "source-atop";   // 남은 눈 알파 안에만 그려진다
       off.drawImage(pupil, gx, gy);
       off.globalCompositeOperation = "source-over";
       ctx.drawImage(off.canvas, 0, 0);
     }
-    // 감은 눈 선은 눈 하단 근처에 그려져 있어 압축된 눈과 자연스럽게 정합한다.
-    // 깊게 감길 때만 섞는다 — 눈웃음(lid≈0.4)에서도 나오면 반달 잔상이 뜬다.
-    const seal = clamp01((lid - 0.6) / 0.4);
+    // 흰자가 있는 눈만 감은 눈 호를 섞는다. 눈알을 끝까지 눌러도 남는 건 흰자 한 줄이라
+    // 그 화풍은 스스로 닫히지 못한다. 점·선 눈은 반대로 자기 획이 곧 닫힌 모습이라
+    // 호를 얹으면 이중선이 된다 — 실측으로 실눈은 획(275~291)과 호(282~292)가 겹쳤다.
+    const eyeL = parts.eye_L_open;
+    const seal = eyeL && (eyeProfile(eyeL) || {}).cls === "outline"
+      ? clamp01((lid - 0.7) / 0.3) : 0;
     if (seal > 0.01) {
       ctx.globalAlpha = seal;
       draw("eye_L_closed"); draw("eye_R_closed");
@@ -1463,6 +1565,6 @@ window.AvatarCore = (() => {
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
-    mountHead3D, applyMorphs, drawChar2D, drawFaceParts, setLocale,
+    mountHead3D, applyMorphs, drawChar2D, drawFaceParts, setLocale, __eyeProfile: eyeProfile,
   };
 })();
