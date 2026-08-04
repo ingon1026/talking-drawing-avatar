@@ -30,18 +30,17 @@
     flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35;
     background: #0d0d12; color: inherit; font-size: 1rem;
   }
-  button {
-    padding: 10px 16px; border-radius: 10px; border: 0; background: #5b8cff;
-    color: #fff; font-size: .95rem; cursor: pointer;
+  button, select {
+    height: 38px; padding: 0 14px; border-radius: 9px; font-size: .9rem;
+    background: #21212b; color: inherit; border: 1px solid #2f2f3c; cursor: pointer;
   }
-  button:disabled { background: #333; cursor: default; }
-  button.alt { background: #2a2a35; }
-  .row { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
-  .controls { margin-top: 16px; display: grid; gap: 10px; font-size: .88rem; }
-  .controls label { display: flex; align-items: center; gap: 10px; }
-  .controls label span.k { width: 88px; color: #9a9ab0; }
-  .controls input[type=range] { flex: 1; }
-  select { padding: 8px; border-radius: 8px; background: #0d0d12; color: inherit; border: 1px solid #2a2a35; }
+  button.primary { background: #5b8cff; border-color: #5b8cff; color: #fff; }
+  button:disabled { background: #26262f; color: #666; cursor: default; }
+  .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
+  /* 토글 줄 — 체크박스는 설정이라 본문보다 한 톤 낮춘다 */
+  .toggles { gap: 16px; margin-top: 12px; font-size: .85rem; color: #9a9ab0; }
+  .toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  #emotions button { padding: 0 12px; }
   #status { margin-top: 12px; color: #9a9ab0; font-size: .9rem; min-height: 1.2em; }
   #status.error { color: #ff7a7a; }
   #chatlog {
@@ -60,7 +59,7 @@
 </head>
 <body>
 <main>
-  <h1>🎭 실시간 퍼펫 아바타 <span><a href="/">영상 모드</a></span></h1>
+  <h1>실시간 퍼펫 아바타 <span><a href="/">영상 모드</a></span></h1>
 
   <div class="stage" id="stage2d"><div class="warp-shake" id="shake">
     <canvas id="gl" width="512" height="512"></canvas>
@@ -69,31 +68,23 @@
   <div class="stage" id="stage3d" style="display:none"><canvas id="cv3d"></canvas></div>
 
   <form id="form">
-    <button id="micBtn" type="button" class="alt" title="마이크로 말 걸기" style="display:none">🎤</button>
+    <button id="micBtn" type="button" title="마이크로 말 걸기" style="display:none">음성</button>
     <input id="text" type="text" placeholder="캐릭터가 말할 문장을 입력하세요…" autocomplete="off">
-    <button id="send" type="submit">말하기</button>
+    <button id="send" type="submit" class="primary">말하기</button>
   </form>
-  <div class="row" id="chatRow">
-    <label><input type="checkbox" id="chatMode"> 💬 대화 모드 <span style="color:#767888;font-size:.82rem">(내 말에 아바타가 대답)</span></label>
-    <button type="button" class="alt" id="clearChat" style="display:none">대화 지우기</button>
-  </div>
 
   <div class="row" id="emotions">
-    <span style="color:#9a9ab0;font-size:.88rem">감정:</span>
-    <button type="button" class="alt" data-emo="neutral">😐 기본</button>
-    <button type="button" class="alt" data-emo="joy">😊 기쁨</button>
-    <button type="button" class="alt" data-emo="sad">😢 슬픔</button>
-    <button type="button" class="alt" data-emo="angry">😠 화남</button>
-    <button type="button" class="alt" data-emo="surprise">😲 놀람</button>
-    <button type="button" class="alt" data-emo="fear">😱 무서움</button>
-    <button type="button" class="alt" data-emo="shy">😳 수줍음</button>
-    <label><input type="checkbox" id="autoEmo" checked> 감정 자동</label>
+    <button type="button" data-emo="neutral">기본</button>
+    <button type="button" data-emo="joy">기쁨</button>
+    <button type="button" data-emo="sad">슬픔</button>
+    <button type="button" data-emo="angry">화남</button>
+    <button type="button" data-emo="surprise">놀람</button>
+    <button type="button" data-emo="fear">무서움</button>
+    <button type="button" data-emo="shy">수줍음</button>
   </div>
 
   <div class="row">
-    <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
-    <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
-    <label><input type="checkbox" id="warpToggle" checked> 얼굴 워핑</label>
+    <select id="character"></select>
     <select id="voice">
       <option value="ko-KR-InJoonNeural">인준 (남성)</option>
       <option value="ko-KR-HyunsuMultilingualNeural">현수 (남성)</option>
@@ -103,19 +94,17 @@
       <option value="neurosync">빠른 엔진 (NeuroSync, ~0.5초)</option>
       <option value="a2f">NVIDIA 3D 엔진 (Audio2Face-3D, ~3초)</option>
     </select>
-    <select id="character"></select>
-    <button type="button" class="alt" id="addChar">➕ 그림 추가</button>
-    <button type="button" class="alt" id="delChar" style="display:none">🗑 삭제</button>
+    <button type="button" id="addChar" title="내가 그린 그림·사진을 캐릭터로 등록합니다. 올린 뒤 눈·입을 4번 지정하면 완성됩니다.">그림 추가</button>
+    <button type="button" id="delChar" style="display:none">삭제</button>
+    <button type="button" id="clearChat" style="display:none">대화 지우기</button>
     <input type="file" id="charFile" accept="image/*" style="display:none">
   </div>
 
-  <div class="controls">
-    <label><span class="k">깜빡임 간격</span><input id="blinkInterval" type="range" min="1" max="10" step="0.5" value="4"><span id="blinkIntervalVal">4초</span></label>
-    <label><span class="k">눈 감기</span><input id="ovBlink" type="range" min="0" max="1" step="0.01" value="0"></label>
-    <label><span class="k">입 벌림</span><input id="ovJaw" type="range" min="0" max="1" step="0.01" value="0"></label>
-    <label><span class="k">미소</span><input id="ovSmile" type="range" min="0" max="1" step="0.01" value="0"></label>
-    <label><span class="k">눈썹 올림</span><input id="ovBrow" type="range" min="0" max="1" step="0.01" value="0"></label>
-    <label><span class="k">시선 좌우</span><input id="ovGaze" type="range" min="-1" max="1" step="0.01" value="0"></label>
+  <div class="row toggles">
+    <label><input type="checkbox" id="chatMode"> 대화 모드</label>
+    <label><input type="checkbox" id="autoEmo" checked> 감정 자동</label>
+    <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
+    <label><input type="checkbox" id="warpToggle" checked> 얼굴 워핑</label>
   </div>
 
   <div id="chatlog" style="display:none"></div>
@@ -161,7 +150,7 @@ async function initCharacters(selectId) {
   charList = list;
   const sel = $("character");
   sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
-    + `<option value="${MARK3D}">🗿 석고상 (NVIDIA mark · 3D)</option>`;
+    + `<option value="${MARK3D}">석고상 (NVIDIA mark · 3D)</option>`;
   sel.onchange = applyMode;
   const pick = selectId && [...sel.options].some(o => o.value === selectId)
     ? selectId : (list.length ? list[0].id : MARK3D);
@@ -205,7 +194,7 @@ const stage = $("stage2d");   // .stage 는 이제 2D·3D 두 개라 id 로 명�
 const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#5b8cff");
 const blinker = AvatarCore.makeBlink({
   autoBlink: () => $("autoBlink").checked,
-  intervalMs: () => +$("blinkInterval").value * 1000,
+  intervalMs: () => 4000,
   duration: 140, jitter: 0.6,
 });
 const cursor = AvatarCore.makeCursorTracker(stage);
@@ -255,9 +244,6 @@ stage.addEventListener("click", () => {
 $("addChar").onclick = () => $("charFile").click();
 $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.target.value = ""; };
 
-// 깜빡임 UI 배선
-$("blinkBtn").onclick = () => blinker.trigger();
-$("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
 
 // ---------- 3D 헤드 (석고상 mark) ----------
 // three 자체는 워프가 이미 받아오지만, GLTFLoader(108KB)·mark.glb(41MB)·WebGLRenderer 씬 구성은
@@ -338,26 +324,17 @@ function render(now) {
   // 그때도 나누면 실제 미러링 입벌림까지 줄어드는 회귀가 생긴다.
   jawGain = (anim && !audio.paused && !audio.ended) ? (anim.jawGain || 1) : 1;
 
-  // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
-  const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
-  smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
-  for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
-  // 눈썹 슬라이더가 닿는 채널은 모드별로 다르다 — 2D 파츠는 눈썹이 한 장이라 browinnerup 하나로
-  // 충분하지만 3D 는 ARKit 3채널을 다 올려야 눈썹 전체가 움직인다. 각 모드의 기존 동작을 그대로 둔다.
-  for (const k of is3D() ? ["browinnerup", "browouterupleft", "browouterupright"] : ["browinnerup"])
-    smooth[k] = Math.max(smooth[k] || 0, browOv);
   // 문장이 바뀌면 표정도 따라 전환 (발화 중에만) — applyMax·headWander 보다 먼저 갱신
   if (anim && anim.emotionTrack && !audio.paused && !audio.ended) emo.followTrack(anim.emotionTrack, audio.currentTime);
   emo.applyMax(smooth, !!(anim && !audio.paused && !audio.ended));   // 발화 중이면 감정 유지, 유휴면 자동 감정 감쇠
-  const blink = Math.max(blinker.value(now), +$("ovBlink").value,
-                         Math.max(W("eyeblinkleft"), W("eyeblinkright")));
+  const blink = Math.max(blinker.value(now), W("eyeblinkleft"), W("eyeblinkright"));
 
   // ===== 여기부터 렌더러별 분기 =====
   if (is3D()) {
     // 3D: 모프 = 실제 근육. applyMorphs 는 smooth 를 그대로 읽으므로 jawGain 증폭이 살아 있다
     // (증폭은 원래 3D 모프용 보정이라 여기선 되돌리지 않는 게 맞다 — 되돌리는 건 2D 픽셀 공식뿐).
     AvatarCore.applyMorphs(mounted.morphMeshes, smooth, blink);
-    const [gsx, gsy] = gaze3d(+$("ovGaze").value, W);  // 슬라이더 > 엔진 채널 > 커서
+    const [gsx, gsy] = gaze3d(0, W);   // 엔진 채널 > 커서
     for (const e of mounted.eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
 
     // 머리: 사용자 드래그 + 발화 중 미세 끄덕임 + 엔진 head pose(있을 때만 — 현 체크포인트는 미출력)
@@ -387,7 +364,7 @@ function render(now) {
   // 눈썹 각도·연속 눈꺼풀은 코어가 담당한다 — 여기에 다시 적으면 코어 개선이 이 페이지에
   // 반영되지 않는다(실제로 그렇게 갈라져 있었다).
   AvatarCore.drawFaceParts(ctx, {
-    parts, manifest, W, blink, gaze: gaze(+$("ovGaze").value, W),   // 슬라이더 > 엔진 채널 > 커서
+    parts, manifest, W, blink, gaze: gaze(0, W),   // 엔진 채널 > 커서
   });
   const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth) {
@@ -421,6 +398,9 @@ $("form").onsubmit = async e => {
   e.preventDefault();
   const text = $("text").value.trim();
   if (!text) return;
+  // 어노테이션이 끝나야 캐릭터가 만들어진다 — 그 전엔 렌더가 어노테이션 화면이라
+  // 발화해도 아무 반응이 없는 것처럼 보인다.
+  if (annotator.active()) { setStatus("눈·입 지정을 먼저 끝내주세요 (ESC로 취소)", true); return; }
   $("send").disabled = true;
   $("text").value = "";
   setStatus("생성 중…");
@@ -443,7 +423,7 @@ fetch("/api/health").then(r => r.json()).then(h => {
   // JoyVASA 없으면 "/" 가 이 페이지를 서빙하므로 영상 모드 링크(h1 의 유일한 링크)를 지운다
   if (!h.joyvasa_ready) document.querySelector("h1 a")?.remove();
   if (!h.chat) {   // 대화 백엔드 없으면 대화 UI 숨김
-    $("chatRow").style.display = "none";
+    $("chatMode").closest("label").style.display = "none";
     $("micBtn").style.display = "none";
   }
 });

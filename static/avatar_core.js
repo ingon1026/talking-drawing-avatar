@@ -1346,6 +1346,14 @@ window.AvatarCore = (() => {
         ctx.strokeRect(annot.ox + x0 * annot.s, annot.oy + y0 * annot.s,
                        (x1 - x0) * annot.s, (y1 - y0) * annot.s);
       }
+      // 단계 안내를 그림 위에 얹는다 — 페이지 하단 상태줄에만 띄웠더니 못 보고 지나쳐서,
+      // 어노테이션이 끝나지 않은 채(=캐릭터 미생성) 발화를 시도하는 일이 생겼다.
+      ctx.fillStyle = "rgba(0,0,0,.72)";
+      ctx.fillRect(0, 0, 512, 46);
+      ctx.fillStyle = "#fff";
+      ctx.font = "600 18px 'Pretendard','Noto Sans KR',sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText(STEPS[Math.min(annot.step, 3)], 16, 23);
     }
     cv.addEventListener("pointerdown", e => {
       if (!annot) return;
