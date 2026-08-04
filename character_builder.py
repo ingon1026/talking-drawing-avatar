@@ -74,9 +74,15 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
     base.convert("RGBA").save(out / "base.png")
 
     mcx, mcy = T(*mouth_center)
+    # 눈 중심 — 부분 감김·눈 커짐이 이 점을 축으로 세로 스케일한다. 안 적으면 렌더가
+    # [256,258](정면 인물화 기준)로 폴백하는데, 화이트보드 그림처럼 얼굴이 위쪽에 있는
+    # 캐릭터는 축이 180px 넘게 어긋나 눈이 캔버스 밖으로 날아간다.
+    ecs = [T(cx, cy) for cx, cy, _ in eyes.values()]
     manifest = {
         "name": name,
         "pupilRange": 0, "browRange": 0, "jawDrop": jaw_drop,
+        "eyeCenter": [round(sum(p[0] for p in ecs) / len(ecs)),
+                      round(sum(p[1] for p in ecs) / len(ecs))],
         "mouthCenter": [round(mcx), round(mcy)],
         "proceduralMouth": True,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},

@@ -4,6 +4,10 @@
   "pupilRange": 8,
   "browRange": 12,
   "jawDrop": 9,
+  "eyeCenter": [
+    256,
+    255
+  ],
   "mouthCenter": [
     256,
     336
