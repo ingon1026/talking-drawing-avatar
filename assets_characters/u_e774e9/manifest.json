@@ -1,0 +1,24 @@
+{
+  "name": "ㄴ",
+  "pupilRange": 0,
+  "browRange": 0,
+  "jawDrop": 6,
+  "eyeCenter": [
+    258,
+    280
+  ],
+  "eyeHalf": 16,
+  "mouthCenter": [
+    226,
+    332
+  ],
+  "proceduralMouth": true,
+  "mouthStyle": {
+    "line": "#2b2b2b",
+    "fill": "#8a3535",
+    "tongue": "#d97b7b",
+    "teeth": "#ffffff",
+    "width": 30
+  },
+  "deletable": true
+}

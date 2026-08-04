@@ -83,6 +83,8 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         "pupilRange": 0, "browRange": 0, "jawDrop": jaw_drop,
         "eyeCenter": [round(sum(p[0] for p in ecs) / len(ecs)),
                       round(sum(p[1] for p in ecs) / len(ecs))],
+        # 눈 반높이 — 눈꺼풀 클립 경계. 반박스가 곧 눈 높이의 절반이다.
+        "eyeHalf": round(sum(hb for _, _, hb in eyes.values()) / len(eyes) * s),
         "mouthCenter": [round(mcx), round(mcy)],
         "proceduralMouth": True,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},
