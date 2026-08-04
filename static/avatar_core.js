@@ -530,7 +530,9 @@ window.AvatarCore = (() => {
           vUv = uv;
           vec2 img = vec2(position.x + 256.0, 256.0 - position.y);   // plane → 이미지 픽셀좌표(y down)
           vec2 disp = vec2(0.0);
-          disp += vec2( 0.0, 14.0) * uJaw    * gk(img, uJawC,    55.0);   // 턱 드롭
+          // 턱 드롭. 벡터 입을 안 쓰는(원본 입을 살린) 캐릭터는 이 워프가 유일한 립싱크라
+          // 진폭이 커야 보인다 — 14px 로는 jawOpen 0.3 에서 4px 라 화면에서 안 읽혔다.
+          disp += vec2( 0.0, 34.0) * uJaw    * gk(img, uJawC,    40.0);   // 턱 드롭
           disp += vec2(-7.0, -9.0) * uSmileL * gk(img, uCornerL, 32.0);   // 좌 입꼬리 (볼 당김)
           disp += vec2( 7.0, -9.0) * uSmileR * gk(img, uCornerR, 32.0);   // 우 입꼬리
           disp += vec2( 8.0,  0.0) * uRound  * gk(img, uCornerL, 32.0);   // 오므림 (안쪽)
