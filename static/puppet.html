@@ -259,6 +259,8 @@ function render(now) {
   const smileOv = +$("ovSmile").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
   for (const k in ov) smooth[k] = Math.max(smooth[k] || 0, ov[k]);
+  // 문장이 바뀌면 표정도 따라 전환 (발화 중에만) — applyMax·headWander 보다 먼저 갱신
+  if (anim && anim.emotionTrack && !audio.paused && !audio.ended) emo.followTrack(anim.emotionTrack, audio.currentTime);
   emo.applyMax(smooth, !!(anim && !audio.paused && !audio.ended));   // 발화 중이면 감정 유지, 유휴면 자동 감정 감쇠
   const blink = Math.max(blinker.value(now), +$("ovBlink").value,
                          Math.max(W("eyeblinkleft"), W("eyeblinkright")));
