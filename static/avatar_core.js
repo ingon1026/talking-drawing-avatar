@@ -871,39 +871,99 @@ window.AvatarCore = (() => {
   }
   let _partsRef = null, _ctxRef = null;   // drawBrow/drawEyes 가 쓰는 프레임 지역 참조
 
-  // 연속 눈꺼풀 렌더. 눈을 세로로 눌러봤더니 눈알(흰자·눈동자)까지 같이 찌그러져
-  // 졸린 눈처럼 기괴해졌다 — 실제 눈은 눈알이 찌그러지는 게 아니라 눈꺼풀이 위에서
-  // 가린다. 그래서 스케일이 아니라 클립으로 위쪽을 잘라낸다. base 는 눈이 지워진
-  // 상태(주변색으로 메움)라 잘린 자리에 피부색이 그대로 드러난다.
+  // 눈 스프라이트에서 '잉크'(어두운 픽셀)의 bbox. 캐릭터당 1회 계산해 캐싱한다.
+  //
+  // 알파 bbox 를 쓰면 안 된다 — 빌더가 클릭 좌표 ±고정반경 정사각형을 통째로 잘라 넣어서
+  // 알파 경계가 곧 클릭 박스이고, 실제 눈보다 크다(돼지 24px 상자에 점은 11px, 실눈 31px
+  // 상자에 선은 17px 이고 상단이 13px 아래에 있다). 하단 피벗 압축은 '실제 눈의 하단'을
+  // 알아야 하므로 잉크 기준이어야 한다. 임계 r+g+b<300 은 자매 리포 drawface-live 의
+  // snapToInk 와 같은 값.
+  const _inkCache = new WeakMap();
+  function inkBox(img) {
+    const hit = _inkCache.get(img);
+    if (hit !== undefined) return hit;
+    let box = null;
+    try {
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      const cx = c.getContext("2d", { willReadFrequently: true });
+      cx.drawImage(img, 0, 0);
+      const d = cx.getImageData(0, 0, c.width, c.height).data;
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+          const i = (y * c.width + x) * 4;
+          if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] < 300) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+      }
+      if (x1 >= 0) box = [x0, y0, x1 + 1, y1 + 1];
+    } catch { /* 크로스오리진 등으로 픽셀을 못 읽으면 폴백 */ }
+    _inkCache.set(img, box);
+    return box;
+  }
+
+  // 눈 스프라이트를 잉크 bbox 하단에 고정한 채 세로로 압축해 그린다.
+  // Live2D 표준 눈 깜빡임이 "윗속눈썹을 아래속눈썹 위치까지 내리는" 변형이고,
+  // 자매 리포 drawface-live 의 deriveHalfEye(derive.js:212) 가 같은 기하를 쓴다.
+  // 중심 피벗 스케일(눈알까지 찌그러짐)·위쪽 클립(테두리선 소실)·아래로 밀기(실눈 토막)를
+  // 차례로 시도하다 도달한 형태 — 화풍을 판별하지 않고 각 화풍다운 결과를 낸다.
+  function squashEye(ctx, img, lid) {
+    const b = inkBox(img);
+    if (!b) { ctx.drawImage(img, 0, 0); return null; }   // 잉크 없음 → 원본 그대로
+    const [x0, y0, x1, y1] = b;
+    const w = x1 - x0, h = y1 - y0;
+    const nh = Math.max(1, h * (1 - lid));
+    ctx.drawImage(img, x0, y0, w, h, x0, y1 - nh, w, nh);
+    return [x0, y1 - nh, w, nh];
+  }
+
   function drawEyes(ctx, parts, drawXY, lid, gaze, manifest) {
-    const draw = (n, dy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dy);
-    if (lid >= 0.995) { draw("eye_L_closed"); draw("eye_R_closed"); return; }
-    const [, ey] = manifest.eyeCenter || [256, 258];
-    const eh = manifest.eyeHalf || 26;
-    const drawOpen = () => {
+    const draw = n => parts[n] && ctx.drawImage(parts[n], 0, 0);
+    const pr = manifest.pupilRange || 0;
+    const gx = gaze[0] * pr, gy = gaze[1] * pr;
+    if (lid <= 0.01) {
       draw("eye_L_open"); draw("eye_R_open");
-      const pr = manifest.pupilRange || 0;
-      drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
-    };
-    if (lid <= 0.01) { drawOpen(); return; }
-    ctx.save();
-    // 눈알을 아래로 밀고 원래 눈 하단에서 잘라낸다 — 위 눈꺼풀이 덮어 내려오는 모습.
-    // 위쪽을 그냥 잘라내면 눈 테두리(굵은 선)까지 사라져 눈이 뻥 뚫려 보였다.
-    ctx.beginPath();
-    ctx.rect(0, 0, ctx.canvas.width, ey + eh);
-    ctx.clip();
-    ctx.translate(0, lid * eh * 1.5);
-    drawOpen();
-    ctx.restore();
-    // 감은 눈 선은 뜬 눈보다 20~25px 아래(눈꺼풀이 내려온 자리)에 그려져 있다. 깊게
-    // 감길 때만 섞는다 — alpha=lid 로 그대로 겹치던 시절엔 눈웃음(lid≈0.4)에서도 나와
-    // 눈 아래에 반달 잔상이 떴다.
+      drawXY("pupil_L", gx, gy); drawXY("pupil_R", gx, gy);
+      return;
+    }
+    for (const side of ["L", "R"]) {
+      const eye = parts[`eye_${side}_open`], pupil = parts[`pupil_${side}`];
+      if (!eye) continue;
+      if (!pupil) { squashEye(ctx, eye, lid); continue; }
+      // 눈동자는 압축하지 않는다 — 같이 누르면 동공이 타원이 돼 졸린 눈처럼 보인다.
+      // Live2D·Character Animator 모두 눈동자를 흰자로 '클리핑'할 뿐 변형하지 않는다.
+      const off = _offscreen(ctx.canvas.width, ctx.canvas.height);
+      squashEye(off, eye, lid);
+      off.globalCompositeOperation = "source-atop";   // 압축된 눈 알파 안에만 남는다
+      off.drawImage(pupil, gx, gy);
+      off.globalCompositeOperation = "source-over";
+      ctx.drawImage(off.canvas, 0, 0);
+    }
+    // 감은 눈 선은 눈 하단 근처에 그려져 있어 압축된 눈과 자연스럽게 정합한다.
+    // 깊게 감길 때만 섞는다 — 눈웃음(lid≈0.4)에서도 나오면 반달 잔상이 뜬다.
     const seal = clamp01((lid - 0.6) / 0.4);
     if (seal > 0.01) {
       ctx.globalAlpha = seal;
       draw("eye_L_closed"); draw("eye_R_closed");
       ctx.globalAlpha = 1;
     }
+  }
+
+  // 눈동자 클리핑용 오프스크린 — 매 프레임 새로 만들면 GC 압력이 커서 하나를 돌려쓴다.
+  let _off = null;
+  function _offscreen(w, h) {
+    if (!_off || _off.canvas.width !== w || _off.canvas.height !== h) {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      _off = c.getContext("2d");
+    }
+    _off.clearRect(0, 0, w, h);
+    return _off;
   }
 
   // 눈썹 + 눈 (파츠 스프라이트 기반). drawChar2D 와 puppet.html 이 함께 쓴다 —
@@ -925,10 +985,7 @@ window.AvatarCore = (() => {
     // eyeSquint(눈웃음)는 부분적으로 감기게, eyeWide(놀람·무서움)는 음수로 더 뜨게 한다.
     const squint = (W("eyesquintleft") + W("eyesquintright")) / 2;
     const wide = (W("eyewideleft") + W("eyewideright")) / 2;
-    // eyeBlink:false = 원본이 이미 감긴 눈(실눈). 가릴 눈알이 없어 눈꺼풀 연출이
-    // 선을 토막내기만 하므로 눈은 원본 그대로 두고 감정은 입·눈썹·워프가 맡는다.
-    const lid = manifest.eyeBlink === false ? 0
-              : clamp01(Math.max(blink, squint * 0.8) - wide * 0.35);
+    const lid = clamp01(Math.max(blink, squint * 0.8) - wide * 0.35);
     drawEyes(ctx, parts, drawXY, lid, gaze, manifest);
   }
 

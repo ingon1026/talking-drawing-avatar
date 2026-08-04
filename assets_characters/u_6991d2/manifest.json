@@ -1,16 +1,16 @@
 {
-  "name": "44",
+  "name": "내 캐릭터",
   "pupilRange": 0,
   "browRange": 0,
   "jawDrop": 6,
   "eyeCenter": [
-    259,
-    278
+    258,
+    279
   ],
-  "eyeHalf": 16,
+  "eyeHalf": 15,
   "mouthCenter": [
-    257,
-    344
+    258,
+    345
   ],
   "proceduralMouth": true,
   "mouthStyle": {

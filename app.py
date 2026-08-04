@@ -324,7 +324,6 @@ class CharacterCreateReq(BaseModel):
     eye_r: list[float]
     mouth_box: list[float]    # [x0, y0, x1, y1]
     mouth_center: list[float] # [cx, cy]
-    eye_blink: bool = True    # 이미 감긴 눈(실눈) 그림이면 False — 깜빡임을 끈다
 
 
 @app.post("/api/characters/create")
@@ -352,8 +351,8 @@ def create_character(req: CharacterCreateReq):
         name=req.name.strip() or "내 캐릭터",
         eyes={"L": tuple(req.eye_l), "R": tuple(req.eye_r)},
         mouth_box=tuple(req.mouth_box), mouth_center=tuple(req.mouth_center),
-        mouth_style={"width": width}, jaw_drop=6, closed_eye=("#1a1a1a", eye_lw),
-        deletable=True, eye_blink=req.eye_blink)
+        mouth_style={"width": width}, jaw_drop=6, closed_eye=(None, eye_lw),
+        deletable=True)
     return {"id": char_id}
 
 
