@@ -884,22 +884,65 @@ window.AvatarCore = (() => {
   const INK_MAX = 300;   // r+g+b 합이 이 미만이면 '획'. character_builder.snap_eye_box 와 같은 값 —
                          // 한쪽만 바꾸면 빌더가 자른 상자와 렌더가 재는 프로파일이 다른 눈을 가리킨다.
   const MIN_VIS = 3;     // 완전히 감겨도 남기는 최소 높이(px). 512² 스프라이트(CANVAS) 기준.
-  const EYE_SIDES = [["eye_L_open", "pupil_L"], ["eye_R_open", "pupil_R"]];
-  const _profCache = new WeakMap();
+  const EYE_SIDES = [["L", "eye_L_open", "pupil_L"], ["R", "eye_R_open", "pupil_R"]];
+  const _pairCache = new WeakMap();
   let _scratch = null;
-  function eyeProfile(img) {
-    const hit = _profCache.get(img);
-    if (hit !== undefined) return hit;
-    let prof = null;
-    try { prof = _buildProfile(img); } catch { /* 픽셀을 못 읽으면 폴백 */ }
-    _profCache.set(img, prof);
+
+  // 양쪽 눈을 함께 분류한다. 한 캐릭터의 두 눈은 같은 화풍이므로 판정도 하나여야 하는데,
+  // 눈마다 따로 재면 지표가 임계 근처인 그림에서 좌우가 갈린다 — 돼지·졸라맨이 실제로
+  // blob/line 으로 갈려 한쪽 눈만 감겼다(채움률 0.69 vs 0.58, 임계 0.6).
+  //
+  // 반환: { cls, L, R } — cls 는 공통, L/R 은 각자의 열 프로파일(선눈이면 null).
+  // 캐시 키는 왼쪽 눈 이미지. loadCharacter 가 캐릭터 전환 때만 새 Image 를 만들어
+  // 두 이미지의 수명이 같으므로 한쪽만 키로 잡아도 짝이 어긋나지 않는다.
+  function eyeProfiles(parts) {
+    const eL = parts.eye_L_open;
+    if (!eL) return { cls: null, L: null, R: null };
+    const hit = _pairCache.get(eL);
+    if (hit) return hit;
+    let out = { cls: null, L: null, R: null };
+    try {
+      const raws = [_scan(eL), parts.eye_R_open ? _scan(parts.eye_R_open) : null];
+      const seen = raws.filter(Boolean);
+      if (seen.length) {
+        // 화풍은 두 지표로 갈린다(실측): 열마다 잉크가 끊겨 여러 런이 되는 비율
+        // (=내부가 비었다), 그리고 채움률. 만화눈 0.84/0.29, 점눈 0.00/0.69~0.78,
+        // 실눈 0.00/0.43~0.47. 양쪽 눈의 픽셀을 합쳐 한 번 판정한다.
+        const sum = k => seen.reduce((a, r) => a + r[k], 0);
+        const cls = sum("multi") / sum("cols") >= 0.4 ? "outline"
+                  : (sum("area") / sum("boxArea") >= 0.6 ? "blob" : "line");
+        out = { cls, L: _finish(raws[0], cls), R: _finish(raws[1], cls) };
+      }
+    } catch { /* 픽셀을 못 읽으면 폴백 */ }
+    _pairCache.set(eL, out);
+    return out;
+  }
+
+  // 선눈(획 자체가 그림)은 null 이 된다 — 지킬 굵기가 곧 눈 전체라 어떤 lid 에서도
+  // 움직일 여지가 없다. 소비 측의 `!p` 폴백이 그대로 "원본을 그린다"라서, 별도의
+  // travel 배열이나 플래그 없이 같은 동작이 나온다.
+  function _finish(raw, cls) {
+    if (!raw || cls === "line") return null;
+    const { x0, x1, top, bot, cap, cy0, cy1 } = raw;
+    const prof = { cls, x0, x1, top0: cy0, bot1: cy1 + 1, top };
+    if (cls === "blob") {
+      // 점은 지킬 획이 없다 — 아래 MIN_VIS 만 남기고 위에서 가린다.
+      const travel = new Int16Array(top.length);
+      for (let x = x0; x <= x1; x++) {
+        if (top[x] >= 0) travel[x] = Math.max(0, bot[x] - top[x] + 1 - MIN_VIS);
+      }
+      prof.travel = travel;
+    } else {
+      // 윤곽눈은 눈알 전체를 눌러 내리므로 열별 이동량이 아니라 최소 잔여 높이만 필요하다.
+      const caps = [];
+      for (let x = x0; x <= x1; x++) if (top[x] >= 0) caps.push(cap[x]);
+      caps.sort((a, b) => a - b);
+      prof.capMed = caps[caps.length >> 1] || MIN_VIS;
+    }
     return prof;
   }
 
-  // 선눈(획 자체가 그림)은 null 을 돌려준다 — 지킬 굵기가 곧 눈 전체라 어떤 lid 에서도
-  // 움직일 여지가 없다. 소비 측의 `!p` 폴백이 그대로 "원본을 그린다"라서, 별도의
-  // travel 배열이나 플래그 없이 같은 동작이 나온다.
-  function _buildProfile(img) {
+  function _scan(img) {
     const W = img.width, H = img.height;
     if (!_scratch || _scratch.canvas.width !== W || _scratch.canvas.height !== H) {
       const c = document.createElement("canvas");
@@ -977,31 +1020,12 @@ window.AvatarCore = (() => {
       if (last > cy1) cy1 = last;
     }
     if (!cols) return null;
-
-    // 화풍은 두 지표로 갈린다(실측): 열마다 잉크가 끊겨 여러 런이 되는 비율(=내부가
-    // 비었다), 그리고 채움률. 만화눈 0.84/0.29, 점눈 0.00/0.69~0.78, 실눈 0.00/0.43~0.47.
-    //   윤곽눈: 내부(흰자)가 있어 열이 끊긴다 → 눈알째 눌러 내린다
-    //   덩어리눈: 전부 칠해진 점 → 지킬 선이 없으니 위에서 가려진다
-    //   선눈: 획 자체가 그림이다 → 굵기를 지켜야 하므로 움직이지 않는다(null)
-    const cls = multi / cols >= 0.4 ? "outline" : (area / (bw * (cy1 - cy0 + 1)) >= 0.6 ? "blob" : "line");
-    if (cls === "line") return null;
-
-    const prof = { cls, x0, x1, top0: cy0, bot1: cy1 + 1, top };
-    if (cls === "blob") {
-      // 점은 지킬 획이 없다 — 아래 MIN_VIS 만 남기고 위에서 가린다.
-      const travel = new Int16Array(W);
-      for (let x = x0; x <= x1; x++) {
-        if (top[x] >= 0) travel[x] = Math.max(0, bot[x] - top[x] + 1 - MIN_VIS);
-      }
-      prof.travel = travel;
-    } else {
-      // 윤곽눈은 눈알 전체를 눌러 내리므로 열별 이동량이 아니라 최소 잔여 높이만 필요하다.
-      const caps = [];
-      for (let x = x0; x <= x1; x++) if (top[x] >= 0) caps.push(cap[x]);
-      caps.sort((a, b) => a - b);
-      prof.capMed = caps[caps.length >> 1] || MIN_VIS;
-    }
-    return prof;
+    // 분류는 여기서 하지 않는다 — 양쪽 눈 지표를 합쳐 eyeProfiles 가 한 번에 판정한다.
+    // 채움률 분모는 잉크 전체 bbox 가 아니라 **최대 성분이 차지하는 열** 기준이다.
+    // 전체 bbox 를 쓰면 성분 밖 잡티가 폭을 늘려 값이 반토막 난다(돼지 오른눈: 전체
+    // 폭 20 인데 점은 8열 → 0.89 가 0.36 으로 떨어져 점눈이 선눈으로 오분류됐다).
+    return { x0, x1, top, bot, cap, cy0, cy1,
+             cols, multi, area, boxArea: cols * (cy1 - cy0 + 1) };
   }
 
   // 눈꺼풀이 내려오는 렌더. 눈알을 찌그러뜨리지 않고 위에서 가린다 — Live2D 도
@@ -1041,13 +1065,12 @@ window.AvatarCore = (() => {
       drawXY("pupil_L", gx, gy); drawXY("pupil_R", gx, gy);
       return;
     }
-    let outline = false;
-    for (const [eyeName, pupilName] of EYE_SIDES) {
+    const profs = eyeProfiles(parts);
+    for (const [side, eyeName, pupilName] of EYE_SIDES) {
       const eye = parts[eyeName], pupil = parts[pupilName];
       if (!eye) continue;
-      const p = eyeProfile(eye);
-      if (p && p.cls === "outline") outline = true;
-      if (!pupil) { occludeEye(ctx, eye, p, lid); continue; }
+      const p = profs[side];
+      if (!pupil || !p) { occludeEye(ctx, eye, p, lid); continue; }
       // 눈동자는 변형하지 않는다 — 같이 누르면 동공이 타원이 돼 졸린 눈처럼 보인다.
       // Live2D·Character Animator 모두 눈동자를 흰자로 '클리핑'할 뿐 변형하지 않는다.
       // 오프스크린은 눈 주변만 다룬다 — 512² 를 통째로 지우고 되합성하면 실제로 픽셀이
@@ -1066,7 +1089,7 @@ window.AvatarCore = (() => {
     // 흰자가 있는 눈만 감은 눈 호를 섞는다. 눈알을 끝까지 눌러도 남는 건 흰자 한 줄이라
     // 그 화풍은 스스로 닫히지 못한다. 점·선 눈은 반대로 자기 획이 곧 닫힌 모습이라
     // 호를 얹으면 이중선이 된다 — 실측으로 실눈은 획(275~291)과 호(282~292)가 겹쳤다.
-    const seal = outline ? clamp01((lid - 0.7) / 0.3) : 0;
+    const seal = profs.cls === "outline" ? clamp01((lid - 0.7) / 0.3) : 0;
     if (seal > 0.01) {
       ctx.globalAlpha = seal;
       draw("eye_L_closed"); draw("eye_R_closed");
@@ -1585,6 +1608,6 @@ window.AvatarCore = (() => {
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
     mountHead3D, applyMorphs, drawChar2D, drawFaceParts, setLocale,
-    __eyeProfile: eyeProfile,   // 콘솔·검증 전용. 공개 계약 아님(반환 형태가 바뀔 수 있다).
+    __eyeProfiles: eyeProfiles,   // 콘솔·검증 전용. 공개 계약 아님(반환 형태가 바뀔 수 있다).
   };
 })();
