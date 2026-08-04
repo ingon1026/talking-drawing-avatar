@@ -118,7 +118,8 @@ const setStatus = AvatarCore.bindStatus($("status"));
 // ---------- 캐릭터 로드 (정적 + 세션 내 사용자 생성) ----------
 const PART_FILES = ["base", "brow_L", "brow_R", "eye_L_open", "eye_R_open",
   "eye_L_closed", "eye_R_closed", "pupil_L", "pupil_R",
-  "mouth_closed", "mouth_M", "mouth_A", "mouth_E", "mouth_I", "mouth_O", "mouth_U"];
+  "mouth_closed", "mouth_M", "mouth_A", "mouth_E", "mouth_I", "mouth_O", "mouth_U",
+  "mouth_upper", "mouth_lower"];
 let parts = {}, manifest = { pupilRange: 0, browRange: 0, jawDrop: 8, proceduralMouth: true, mouthStyle: {} };
 const userChars = {};  // id → {manifest, parts} (세션 한정)
 
@@ -325,7 +326,8 @@ function render(now) {
   AvatarCore.drawFaceParts(ctx, { parts, manifest, W, blink, gaze: gaze(W) });
   const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth === false && parts.mouth_closed) {
-    AvatarCore.drawSpriteMouth(ctx, parts, mouthPicker, now, jawDy);  // 스프라이트 크로스페이드
+    if (!AvatarCore.drawSplitLips(ctx, parts, W, manifest, jawDy))
+      AvatarCore.drawSpriteMouth(ctx, parts, mouthPicker, now, jawDy);  // 스프라이트 크로스페이드
   } else {
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);
   }

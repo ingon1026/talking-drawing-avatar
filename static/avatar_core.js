@@ -492,6 +492,30 @@ window.AvatarCore = (() => {
   // ---------- 스프라이트 입 크로스페이드 ----------
   // 반드시 스프라이트 모드 브랜치에서만(프레임당 1회) 호출 — pick() 이 히스테리시스 상태를 전진시킴.
   // 전환 중(fade<1)이고 이전 스프라이트가 존재하면 α로 겹쳐 페이드, 아니면 현재만. jawDy 만큼 세로 이동.
+  // 원본 입술을 위/아래 두 장으로 갈라 아랫입술만 내린다. 그 사이에 구강이 드러난다.
+  // 원본을 그대로 두면 벌릴 틈이 없고(그림에 입 안쪽이 없다), 구강을 통째로 얹으면
+  // 입술을 덮어버린다 — 둘 다 실측으로 확인하고 이 구조로 왔다.
+  function drawSplitLips(ctx, parts, W, manifest, jawDy) {
+    const up = parts.mouth_upper, lo = parts.mouth_lower;
+    if (!up || !lo) return false;
+    const box = manifest.mouthBox || [0, 0, 0, 0];
+    const lipY = manifest.lipSplit || 0;
+    const open = W("jawopen") * 40 + avgLR(W, "mouthlowerdown") * 8;
+    ctx.drawImage(up, 0, jawDy);
+    if (open > 1) {
+      // 타원 — 사각형으로 채우면 입꼬리 밖까지 각지게 드러난다. 입꼬리는 안 벌어지므로
+      // 폭을 입 상자보다 좁게 잡고 열릴수록 조금씩 넓힌다.
+      const cx = (box[0] + box[2]) / 2;
+      const halfW = (box[2] - box[0]) * (0.26 + 0.05 * clamp01(open / 30));
+      ctx.fillStyle = (manifest.mouthStyle || {}).fill || "#5a2f2a";
+      ctx.beginPath();
+      ctx.ellipse(cx, lipY + jawDy + open * 0.45, halfW, open * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.drawImage(lo, 0, jawDy + open);
+    return true;
+  }
+
   function drawSpriteMouth(ctx, parts, picker, now, jawDy) {
     const { cur, prev, fade } = picker.pick(now);
     const drawM = name => parts[name] && ctx.drawImage(parts[name], 0, jawDy);
@@ -1607,7 +1631,7 @@ window.AvatarCore = (() => {
   return {
     norm, inferEmotion, classifyEmotion, voiceProsody, smoothStep, weightsFromAnim, shapeAnim, SHAPE,
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
-    makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
+    makeMouthPicker, drawVectorMouth, drawSpriteMouth, drawSplitLips, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
     mountHead3D, applyMorphs, drawChar2D, drawFaceParts, setLocale,
     __eyeProfiles: eyeProfiles,   // 콘솔·검증 전용. 공개 계약 아님(반환 형태가 바뀔 수 있다).

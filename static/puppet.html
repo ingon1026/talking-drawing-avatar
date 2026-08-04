@@ -123,7 +123,8 @@ const setStatus = AvatarCore.bindStatus($("status"));
 // ---------- 캐릭터 에셋 로드 (파일명 규칙 기반) ----------
 const PART_FILES = ["base", "brow_L", "brow_R", "eye_L_open", "eye_R_open",
   "eye_L_closed", "eye_R_closed", "pupil_L", "pupil_R",
-  "mouth_closed", "mouth_M", "mouth_A", "mouth_E", "mouth_I", "mouth_O", "mouth_U"];
+  "mouth_closed", "mouth_M", "mouth_A", "mouth_E", "mouth_I", "mouth_O", "mouth_U",
+  "mouth_upper", "mouth_lower"];
 // 기본값에 새 manifest 를 얹는다. 예전엔 직전 캐릭터의 manifest 에 얹어서, 새 캐릭터가
 // 안 적은 키(eyeHalf 등)에 앞 캐릭터 값이 그대로 남아 눈 위치·크기가 어긋났다.
 const MANIFEST_DEFAULTS = { pupilRange: 7, browRange: 10, jawDrop: 8 };
@@ -373,7 +374,8 @@ function render(now) {
   if (manifest.proceduralMouth) {
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);  // 근육 채널 직접 구동 (기본)
   } else {
-    AvatarCore.drawSpriteMouth(ctx, parts, mouthPicker, now, jawDy);  // 스프라이트 크로스페이드
+    if (!AvatarCore.drawSplitLips(ctx, parts, W, manifest, jawDy))
+      AvatarCore.drawSpriteMouth(ctx, parts, mouthPicker, now, jawDy);  // 스프라이트 크로스페이드
   }
 }
 requestAnimationFrame(render);

@@ -150,6 +150,20 @@ def _largest_blob_box(px, box):
     return (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
 
 
+def split_lips(img, box):
+    """입 상자를 입술 사이 선에서 위/아래로 가른다. 반환: 분리선 y(캔버스 좌표).
+
+    다문 입 그림은 '윗입술 / 사이 선(가장 어두움) / 아랫입술' 구조다. 그 선을 경계로
+    두 장으로 나눠 두면 아랫입술만 내려 입을 벌릴 수 있다 — 원본 입술 모양을 지키면서
+    립싱크가 되는 유일한 방법이다. 구강을 통째로 얹으면 입술을 덮어버린다(실측).
+    """
+    x0, y0, x1, y1 = box
+    px = img.convert("RGB").load()
+    n = max(1, x1 - x0)
+    rows = [(sum(sum(px[x, y]) for x in range(x0, x1)) / n, y) for y in range(y0 + 2, y1 - 2)]
+    return min(rows)[1] if rows else (y0 + y1) // 2
+
+
 def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                     mouth_style=None, jaw_drop=6, closed_eye=(None, 4),
                     deletable=False, persona=None):
@@ -194,9 +208,18 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
 
         _fill_skin(base, box)
 
-    # 입은 지우지 않는다 — 지우고 벡터 입으로 대체하면 원본 입술이 통째로 사라져 얼굴이
-    # 다른 사람이 된다. 원본을 그대로 두고 워프의 턱 앵커가 벌린다.
-    # ponytail: 립싱크 표현력은 벡터 입보다 약하다. 화풍 보존이 우선이라 이 쪽을 택했다.
+    # 입술을 위/아래 두 장으로 가른다 — 아랫입술만 내려 벌리면 원본 모양이 지켜진다.
+    # 벡터 입으로 대체하면 얼굴이 다른 사람이 되고, 원본을 그대로 두면 벌릴 틈이 없다.
+    mb = tuple(map(int, (*T(mouth_box[0], mouth_box[1]), *T(mouth_box[2], mouth_box[3]))))
+    lip_y = split_lips(base, mb)
+    # 구강 색 — 입술 사이 선에서 뽑되 더 어둡게. 그대로 쓰면 입술과 같은 밝기라
+    # 벌어진 게 아니라 입술이 두꺼워진 것처럼 보인다.
+    mouth_ink = tuple(int(c * 0.62) for c in ink_color(base, mb))
+    for tag, (sy, ey) in (("upper", (mb[1], lip_y)), ("lower", (lip_y, mb[3]))):
+        lay = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        lay.paste(base.crop((mb[0], sy, mb[2], ey)).convert("RGBA"), (mb[0], sy))
+        lay.save(out / f"mouth_{tag}.png")
+    _fill_skin(base, mb)                     # 원래 입 자리는 지운다(두 장이 대신 그린다)
     base.convert("RGBA").save(out / "base.png")
 
     mcx, mcy = T(*mouth_center)
@@ -208,8 +231,9 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         "name": name,
         "pupilRange": 0, "browRange": 0, "jawDrop": jaw_drop,
         "mouthCenter": [round(mcx), round(mcy)],
+        "lipSplit": lip_y, "mouthBox": list(mb),
         "proceduralMouth": False,
-        "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},
+        "mouthStyle": {**DEFAULT_STYLE, "fill": "#%02x%02x%02x" % mouth_ink, **(mouth_style or {})},
         "deletable": deletable,
     }
     if persona:
