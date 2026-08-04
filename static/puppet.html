@@ -50,7 +50,6 @@
   #chatlog .me { color: #b9c6e8; }
   #chatlog .bot { color: #e8e8ef; }
   #micBtn.on { background: #e2647e; }
-  #mirrorBtn.on { background: #5b8cff; }
 </style>
 </head>
 <body>
@@ -86,12 +85,8 @@
 
   <div class="row">
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
-    <button type="button" class="alt" id="mirrorBtn" title="웹캠 표정을 캐릭터가 따라합니다">🪞 미러링</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
     <label><input type="checkbox" id="warpToggle" checked> 얼굴 워핑</label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;color:#9a9ab0;cursor:pointer">
-      <input type="checkbox" id="headMove"> 머리 움직임
-    </label>
     <select id="voice">
       <option value="ko-KR-InJoonNeural">인준 (남성)</option>
       <option value="ko-KR-HyunsuMultilingualNeural">현수 (남성)</option>
@@ -120,7 +115,6 @@
   <div id="status"></div>
   <audio id="audio"></audio>
 
-  <div id="panel" style="display:none;margin-top:14px"></div>
 </main>
 
 <script src="/static/avatar_core.js"></script>
@@ -240,17 +234,6 @@ $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.targe
 $("blinkBtn").onclick = () => blinker.trigger();
 $("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
 
-// ---------- 웹캠 미러링 (코어 makeMirror — MediaPipe 블렌드셰이프 → 파츠 채널) ----------
-const mirror = AvatarCore.makeMirror({
-  onStatus: setStatus,
-});
-const mpanel = AvatarCore.makeMirrorPanel(mirror, $("panel"));   // 비교군 분석 패널 (코어 공용)
-$("mirrorBtn").onclick = () => {
-  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); $("panel").style.display = "none"; return; }
-  mirror.start().then(() => { $("mirrorBtn").classList.add("on"); $("panel").style.display = ""; })
-    .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
-};
-
 // ---------- 렌더 루프 ----------
 
 function render(now) {
@@ -265,14 +248,11 @@ function render(now) {
 
   // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
-  mirror.apply(smooth, now);
   // shapeAnim이 이번 발화에 적용한 jawopen 증폭을 되돌려 2D 소비자(입 크기·이 몸짓 임계값)에
   // 넘긴다 — 3D 모프용 보정이라 2D 픽셀 공식은 원래(증폭 전) 스케일 그대로 써야 함.
   // audio 재생 중일 때만 적용: 끝난 뒤엔 smooth.jawopen 이 미러(웹캠) 단독 값이 되므로,
   // 그때도 나누면 실제 미러링 입벌림까지 줄어드는 회귀가 생긴다.
-  // W 가 이 값을 읽으므로 W 를 처음 쓰는 지점(mpanel.draw) 전에 반영해야 한다.
   jawGain = (anim && !audio.paused && !audio.ended) ? (anim.jawGain || 1) : 1;
-  mpanel.draw(W);   // 트래킹 미리보기
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
   const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };
@@ -285,8 +265,7 @@ function render(now) {
 
   // 머리 움직임: 발화 에너지(끄덕임) + 느린 표류 + 잔잔한 사인
   const sway = anim && !audio.paused ? 1 : 0.5;
-  // 감정 → 몸짓 연동 + 머리 움직임 토글 ON 이면 웹캠 고개 방향 합성
-  headWander(shakeEl, now, W("jawopen"), sway, emo.current(), $("headMove").checked ? mirror.head() : null);
+  headWander(shakeEl, now, W("jawopen"), sway, emo.current());   // 감정 → 몸짓 연동
 
   const warpOn = warp.ready && warpToggle.checked;
   if (warpOn) { glCanvas.style.visibility = "visible"; warp.render(); }

@@ -427,11 +427,6 @@ def studio3d():
     return FileResponse(ROOT / "static" / "studio3d.html")
 
 
-@app.get("/head")
-def head_mirror():
-    return FileResponse(ROOT / "static" / "head.html")
-
-
 app.mount("/media", StaticFiles(directory=OUT), name="media")
 app.mount("/characters", StaticFiles(directory=ROOT / "assets_characters"), name="characters")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

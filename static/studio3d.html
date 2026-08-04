@@ -38,7 +38,6 @@
   #chatlog .me { color: #b9d68a; }
   #chatlog .bot { color: #e8e8ef; }
   #micBtn.on { background: #e2647e; }
-  #mirrorBtn.on { background: #76b900; }
 </style>
 <script type="importmap">{ "imports": { "three": "/static/vendor/three.module.js" } }</script>
 </head>
@@ -73,11 +72,7 @@
 
   <div class="row">
     <button type="button" class="alt" id="blinkBtn">👁 지금 깜빡!</button>
-    <button type="button" class="alt" id="mirrorBtn" title="웹캠 표정을 석고상이 따라합니다">🪞 미러링</button>
     <label><input type="checkbox" id="autoBlink" checked> 자동 깜빡임</label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;color:#9a9ab0;cursor:pointer">
-      <input type="checkbox" id="headMove"> 머리 움직임
-    </label>
     <select id="voice">
       <option value="ko-KR-InJoonNeural">인준 (남성)</option>
       <option value="ko-KR-HyunsuMultilingualNeural">현수 (남성)</option>
@@ -100,7 +95,6 @@
   <div id="status">3D 모델 로딩 중… (41MB, 최초 1회)</div>
   <audio id="audio"></audio>
 
-  <div id="panel" style="display:none;margin-top:14px"></div>
 </main>
 
 <script src="/static/avatar_core.js"></script>
@@ -193,25 +187,12 @@ const blinker = AvatarCore.makeBlink({
 const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#76b900");
 $("blinkBtn").onclick = () => blinker.trigger();
 
-// ---------- 웹캠 미러링 (코어 makeMirror — MediaPipe 블렌드셰이프 → mark 모프타깃) ----------
-const mirror = AvatarCore.makeMirror({
-  onStatus: setStatus,
-});
-const mpanel = AvatarCore.makeMirrorPanel(mirror, $("panel"));   // 비교군 분석 패널 (코어 공용)
-$("mirrorBtn").onclick = () => {
-  if (mirror.on) { mirror.stop(); $("mirrorBtn").classList.remove("on"); $("panel").style.display = "none"; return; }
-  mirror.start().then(() => { $("mirrorBtn").classList.add("on"); $("panel").style.display = ""; })
-    .catch(e => { mirror.stop(); $("mirrorBtn").classList.remove("on"); setStatus("미러링 실패: " + e.message, true); });
-};
-
 // ---------- 렌더 루프 ----------
 function render(now) {
   requestAnimationFrame(render);
   if (!mesh) return;
 
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
-  mirror.apply(smooth, now);
-  mpanel.draw(W);   // 트래킹 미리보기
   smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
@@ -236,10 +217,7 @@ function render(now) {
     const hf = anim.head[Math.min(Math.floor(audio.currentTime * anim.fps), anim.head.length - 1)];
     hYaw = hf[0] * Math.PI / 180; hPitch = hf[1] * Math.PI / 180; hRoll = hf[2] * Math.PI / 180;
   }
-  // 토글 ON 이면 웹캠 머리 자세를 위에 얹는다 (OFF 면 기존 동작 그대로)
-  const h = $("headMove").checked ? mirror.head() : null;
-  if (h) group.rotation.set(userPitch + nod * 0.04 + hPitch + h[1], userYaw + hYaw + h[0], hRoll + h[2]);
-  else group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);
+  group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);   // 발화 애니메이션의 머리 자세
 
   renderer.render(scene, camera);
 }
