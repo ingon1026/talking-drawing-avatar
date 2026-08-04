@@ -523,6 +523,7 @@ window.AvatarCore = (() => {
       vert: `
         uniform vec2 uJawC, uCornerL, uCornerR;
         uniform float uJaw, uSmileL, uSmileR, uRound, uFrownL, uFrownR, uSneer;
+        uniform float uCheek, uJawFwd, uShrug;
         uniform vec2 uNoseC;
         varying vec2 vUv;
         float gk(vec2 p, vec2 c, float s){ vec2 d = p - c; return exp(-dot(d, d) / (2.0 * s * s)); }
@@ -540,6 +541,17 @@ window.AvatarCore = (() => {
           // 코 찡긋 — 화남의 유일한 상단 얼굴 변형. 앵커가 입뿐이라 화남이 이미지를
           // 0픽셀 변형하던 문제를 푼다. 코를 위로 당겨 콧등에 주름이 잡히는 인상을 준다.
           disp += vec2( 0.0, -7.0) * uSneer  * gk(img, uNoseC,   30.0);
+          // 아래 세 앵커는 입꼬리에서 유도한다 — 볼·입 중심은 입꼬리와의 상대 위치가
+          // 캐릭터가 달라도 거의 일정해서, manifest 를 늘리지 않고도 자리를 잡을 수 있다.
+          // 볼은 눈에서 멀리·좁게 잡는다. 눈은 base 위에 별도 스프라이트로 얹히는데 워프는
+          // base 만 변형해서, 커널이 눈까지 닿으면 볼 홍조가 눈 밑으로 밀려 올라와 겹쳤다.
+          vec2 cheekL = uCornerL + vec2(-18.0, -20.0);
+          vec2 cheekR = uCornerR + vec2( 18.0, -20.0);
+          vec2 mouthC = (uCornerL + uCornerR) * 0.5;
+          disp += vec2( 0.0, -5.0) * uCheek  * gk(img, cheekL,   26.0);   // 볼 올림 (진짜 웃음)
+          disp += vec2( 0.0, -5.0) * uCheek  * gk(img, cheekR,   26.0);
+          disp += vec2( 0.0,  5.0) * uJawFwd * gk(img, uJawC,    48.0);   // 턱 내밈 (화남)
+          disp += vec2( 0.0, -5.0) * uShrug  * gk(img, mouthC,   22.0);   // 윗입술 삐죽 (슬픔)
           vec2 pos = position.xy;
           pos.x += disp.x; pos.y -= disp.y;                          // 이미지 y-down → plane y-up
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 0.0, 1.0);
@@ -568,6 +580,9 @@ window.AvatarCore = (() => {
               uCornerR: { value: new T.Vector2(292, 340) },
               uNoseC: { value: new T.Vector2(256, 300) },
               uSneer: { value: 0 },
+              uCheek: { value: 0 },
+              uJawFwd: { value: 0 },
+              uShrug: { value: 0 },
               uJaw: { value: 0 }, uSmileL: { value: 0 }, uSmileR: { value: 0 },
               uRound: { value: 0 }, uFrownL: { value: 0 }, uFrownR: { value: 0 },
             },
@@ -618,6 +633,9 @@ window.AvatarCore = (() => {
         u.uFrownL.value = W("mouthfrownleft");
         u.uFrownR.value = W("mouthfrownright");
         u.uSneer.value = avgLR(W, "nosesneer");
+        u.uCheek.value = avgLR(W, "cheeksquint");
+        u.uJawFwd.value = W("jawforward");
+        u.uShrug.value = W("mouthshrugupper");
         this.renderer.render(this.scene, this.camera);
       },
     };
@@ -879,9 +897,16 @@ window.AvatarCore = (() => {
       const pr = manifest.pupilRange || 0;
       drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
       ctx.restore();
-      ctx.globalAlpha = lid;   // 감은 눈 선을 겹쳐 올려 눈꺼풀이 닫히는 인상을 준다
-      draw("eye_L_closed"); draw("eye_R_closed");
-      ctx.globalAlpha = 1;
+      // 감은 눈 선은 뜬 눈보다 20~25px 아래(눈꺼풀이 내려온 자리)에 그려져 있어 원위치로
+      // 겹쳐야 한다 — 위 스케일 안에 넣으면 같이 납작해져 눈꺼풀 인상이 사라진다.
+      // 대신 깊게 감길 때만 섞는다. 예전엔 alpha=lid 라 눈웃음(lid≈0.4)에서도 나와
+      // 눌린 눈 아래에 반달 잔상이 떴다.
+      const seal = clamp01((lid - 0.6) / 0.4);
+      if (seal > 0.01) {
+        ctx.globalAlpha = seal;
+        draw("eye_L_closed"); draw("eye_R_closed");
+        ctx.globalAlpha = 1;
+      }
       return;
     }
     draw("eye_L_open"); draw("eye_R_open");
