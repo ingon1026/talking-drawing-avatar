@@ -316,22 +316,13 @@ function render(now) {
   else { glCanvas.style.visibility = "hidden"; }
 
   ctx.clearRect(0, 0, 512, 512);
-  const draw = (n, dyy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dyy);
-  const drawXY = (n, dx, dyy) => parts[n] && ctx.drawImage(parts[n], dx, dyy);
   if (!warpOn) {   // 워프 OFF/미지원: 2D가 흰 배경+base를 그림 (폴백). ON이면 WebGL이 base 담당, 배경은 .stage 흰색.
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 512, 512);
-    draw("base");
+    if (parts.base) ctx.drawImage(parts.base, 0, 0);
   }
-  const browUp = -(manifest.browRange || 0) * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
-               + (manifest.browRange || 0) * 0.8 * (W("browdownleft") + W("browdownright")) / 2;
-  draw("brow_L", browUp); draw("brow_R", browUp);
-  if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
-  else {
-    draw("eye_L_open"); draw("eye_R_open");
-    const [gzx, gzy] = gaze(W);   // 커서/감정채널/유휴 saccade
-    const pr = manifest.pupilRange || 0;
-    drawXY("pupil_L", gzx * pr, gzy * pr); drawXY("pupil_R", gzx * pr, gzy * pr);
-  }
+  // 눈썹 각도·눈꺼풀은 코어가 담당한다 — 여기에 다시 적으면 코어 개선이 이 페이지에
+  // 반영되지 않는다(실제로 blink>0.5 이진 교체로 갈라져 있었다).
+  AvatarCore.drawFaceParts(ctx, { parts, manifest, W, blink, gaze: gaze(W) });
   const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth === false && parts.mouth_closed) {
     AvatarCore.drawSpriteMouth(ctx, parts, mouthPicker, now, jawDy);  // 스프라이트 크로스페이드
