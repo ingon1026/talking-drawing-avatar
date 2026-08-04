@@ -500,16 +500,19 @@ window.AvatarCore = (() => {
     if (!up || !lo) return false;
     const box = manifest.mouthBox || [0, 0, 0, 0];
     const lipY = manifest.lipSplit || 0;
-    const open = W("jawopen") * 40 + avgLR(W, "mouthlowerdown") * 8;
+    // 벌림 폭. 입술 두께(10px 안팎)보다 크게 벌리면 만화 얼굴에서 과하게 읽힌다.
+    const open = W("jawopen") * 22 + avgLR(W, "mouthlowerdown") * 5;
     ctx.drawImage(up, 0, jawDy);
     if (open > 1) {
       // 타원 — 사각형으로 채우면 입꼬리 밖까지 각지게 드러난다. 입꼬리는 안 벌어지므로
       // 폭을 입 상자보다 좁게 잡고 열릴수록 조금씩 넓힌다.
       const cx = (box[0] + box[2]) / 2;
-      const halfW = (box[2] - box[0]) * (0.26 + 0.05 * clamp01(open / 30));
+      // 가로로 넓게, 세로는 벌어진 틈을 꽉 채운다. 세로를 덜 채우면 구강과 아랫입술
+      // 사이에 살색 띠가 생기고, 가로가 좁으면 동그란 구멍이 뚫린 것처럼 보인다.
+      const halfW = (box[2] - box[0]) * (0.38 + 0.05 * clamp01(open / 30));
       ctx.fillStyle = (manifest.mouthStyle || {}).fill || "#5a2f2a";
       ctx.beginPath();
-      ctx.ellipse(cx, lipY + jawDy + open * 0.45, halfW, open * 0.45, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, lipY + jawDy + open * 0.5, halfW, open * 0.55, 0, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.drawImage(lo, 0, jawDy + open);

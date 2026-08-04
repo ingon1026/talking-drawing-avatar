@@ -214,7 +214,7 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
     lip_y = split_lips(base, mb)
     # 구강 색 — 입술 사이 선에서 뽑되 더 어둡게. 그대로 쓰면 입술과 같은 밝기라
     # 벌어진 게 아니라 입술이 두꺼워진 것처럼 보인다.
-    mouth_ink = tuple(int(c * 0.62) for c in ink_color(base, mb))
+    mouth_ink = tuple(int(c * 0.78) for c in ink_color(base, mb))
     for tag, (sy, ey) in (("upper", (mb[1], lip_y)), ("lower", (lip_y, mb[3]))):
         lay = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
         lay.paste(base.crop((mb[0], sy, mb[2], ey)).convert("RGBA"), (mb[0], sy))
