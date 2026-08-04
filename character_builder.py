@@ -90,7 +90,64 @@ def snap_eye_box(img, box):
         if nb == (x0, y0, x1, y1):
             break
         x0, y0, x1, y1 = nb
-    return (x0, y0, x1, y1)
+    return _largest_blob_box(px, (x0, y0, x1, y1))
+
+
+def _fill_skin(img, box, ring=6):
+    """상자를 테두리의 **비잉크** 픽셀 중앙값으로 채운다.
+
+    _border_median 은 잉크를 포함해서, 눈 옆에 머리카락·속눈썹이 있으면 그 색이 중앙값을
+    끌어가 얼굴에 머리색 사각형이 남았다. 방향 보간(가로/세로)도 해봤지만 눈 주변이
+    앞머리·속눈썹으로 둘러싸인 그림에서는 줄무늬·세로 띠로 번진다 — 눈 주변은 대체로
+    균일한 살색이라 단색이면 충분하다.
+    """
+    x0, y0, x1, y1 = box
+    px = img.load()
+    w, h = img.size
+    skin = []
+    for x in range(max(0, x0 - ring), min(w, x1 + ring)):
+        for y in list(range(max(0, y0 - ring), y0)) + list(range(y1, min(h, y1 + ring))):
+            if sum(px[x, y]) >= INK_MAX:
+                skin.append(px[x, y])
+    for y in range(max(0, y0), min(h, y1)):
+        for x in list(range(max(0, x0 - ring), x0)) + list(range(x1, min(w, x1 + ring))):
+            if sum(px[x, y]) >= INK_MAX:
+                skin.append(px[x, y])
+    fill = _median_rgb(skin) if skin else _border_median(img, box)
+    ImageDraw.Draw(img).rectangle((x0, y0, x1 - 1, y1 - 1), fill=fill)
+
+
+def _largest_blob_box(px, box):
+    """상자 안 잉크 중 최대 연결성분(8-이웃)의 bbox. 렌더의 _buildProfile 과 같은 필터다.
+
+    확장이 눈 옆 머리카락·눈썹을 물면 그 큰 상자가 통째로 지워져 얼굴에 머리색 사각형이
+    남는다. 눈에 붙어 있지 않은 잉크는 눈이 아니다.
+    """
+    x0, y0, x1, y1 = box
+    ink = lambda x, y: sum(px[x, y]) < INK_MAX
+    seen, best = set(), []
+    for sy in range(y0, y1):
+        for sx in range(x0, x1):
+            if (sx, sy) in seen or not ink(sx, sy):
+                continue
+            stack, comp = [(sx, sy)], []
+            seen.add((sx, sy))
+            while stack:
+                cx, cy = stack.pop()
+                comp.append((cx, cy))
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        nx, ny = cx + dx, cy + dy
+                        if x0 <= nx < x1 and y0 <= ny < y1 and (nx, ny) not in seen and ink(nx, ny):
+                            seen.add((nx, ny))
+                            stack.append((nx, ny))
+            if len(comp) > len(best):
+                best = comp
+    if not best:
+        return box
+    xs = [c[0] for c in best]
+    ys = [c[1] for c in best]
+    return (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
 
 
 def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
@@ -135,11 +192,11 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                                    fill=color, width=lw)
         closed.save(out / f"eye_{side}_closed.png")
 
-        d.rectangle(box, fill=_border_median(base, box))
+        _fill_skin(base, box)
 
-    mb = mouth_box
-    box = tuple(map(int, (*T(mb[0], mb[1]), *T(mb[2], mb[3]))))
-    d.rectangle(box, fill=_border_median(base, box))
+    # 입은 지우지 않는다 — 지우고 벡터 입으로 대체하면 원본 입술이 통째로 사라져 얼굴이
+    # 다른 사람이 된다. 원본을 그대로 두고 워프의 턱 앵커가 벌린다.
+    # ponytail: 립싱크 표현력은 벡터 입보다 약하다. 화풍 보존이 우선이라 이 쪽을 택했다.
     base.convert("RGBA").save(out / "base.png")
 
     mcx, mcy = T(*mouth_center)
@@ -151,7 +208,7 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         "name": name,
         "pupilRange": 0, "browRange": 0, "jawDrop": jaw_drop,
         "mouthCenter": [round(mcx), round(mcy)],
-        "proceduralMouth": True,
+        "proceduralMouth": False,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},
         "deletable": deletable,
     }
