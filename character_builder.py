@@ -11,8 +11,19 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 CANVAS = 512
+INK_MAX = 300   # r+g+b 합이 이 미만이면 '획'. avatar_core.js 의 INK_MAX 와 같은 값이어야
+                # 빌더가 자른 상자와 렌더가 재는 프로파일이 같은 눈을 가리킨다.
 DEFAULT_STYLE = {"line": "#2b2b2b", "fill": "#8a3535", "tongue": "#d97b7b",
                  "teeth": "#ffffff", "width": 26}
+
+
+_SNAP_PAD, _SNAP_CAP, _SNAP_ITER = 4, 2.5, 8   # 눈 상자 스냅: 확장 여유 / 상한 배율 / 반복 상한
+_INK_FRAC = 0.05                               # 선 색 표본: 가장 어두운 비율
+
+
+def _median_rgb(pixels):
+    """픽셀 목록의 채널별 중앙값 색."""
+    return tuple(int(statistics.median(c[i] for c in pixels)) for i in range(3))
 
 
 def _border_median(img, box, ring=4):
@@ -26,10 +37,10 @@ def _border_median(img, box, ring=4):
     for y in range(max(0, y0), min(img.height, y1)):
         for x in list(range(max(0, x0 - ring), x0)) + list(range(x1, min(img.width, x1 + ring))):
             samples.append(px[x, y])
-    return tuple(int(statistics.median(c[i] for c in samples)) for i in range(3))
+    return _median_rgb(samples)
 
 
-def ink_color(img, box, frac=0.05):
+def ink_color(img, box):
     """box 안에서 가장 어두운 frac 비율 픽셀의 채널별 중앙값 — 그 그림의 실제 '선 색'.
 
     감은 눈 호를 검정(#1a1a1a) 고정으로 그리면 연필 그림·갈색 선 캐릭터에서 그 획만
@@ -41,11 +52,11 @@ def ink_color(img, box, frac=0.05):
     if not pxs:
         return (26, 26, 26)
     pxs.sort(key=sum)
-    keep = pxs[:max(1, int(len(pxs) * frac))]
-    return tuple(int(statistics.median(c[i] for c in keep)) for i in range(3))
+    keep = pxs[:max(1, int(len(pxs) * _INK_FRAC))]
+    return _median_rgb(keep)
 
 
-def snap_eye_box(img, box, pad=4, cap_scale=2.5, max_iter=8):
+def snap_eye_box(img, box):
     """클릭 상자를 그 안팎 잉크(어두운 픽셀)에 맞춘다 — 작으면 넓히고 크면 조인다.
 
     사용자는 눈 *중심*만 클릭하고 크기는 지정하지 않는다. 반경이 '원본 최대변의 3%'
@@ -54,22 +65,23 @@ def snap_eye_box(img, box, pad=4, cap_scale=2.5, max_iter=8):
     화면이 안 변했다. 눈꺼풀 압축이 눈의 실제 하단을 피벗으로 쓰므로 상자가 눈에 맞아야 한다.
 
     자매 리포 drawface-live 의 expandBoxToInk(imageops.js:169) 와 같은 방식 —
-    pad 만큼 넓혀 잉크 bbox 를 다시 재기를 수렴할 때까지 반복하되, 눈썹·머리카락까지
-    빨아들이지 않게 원래 상자의 cap_scale 배 안으로 제한한다.
+    _SNAP_PAD 만큼 넓혀 잉크 bbox 를 다시 재기를 수렴할 때까지 반복하되, 눈썹·머리카락까지
+    빨아들이지 않게 원래 상자의 _SNAP_CAP 배 안으로 제한한다. 자매 쪽은 상자를 키우기만
+    하고 여기는 조이기도 한다 — 의도적 차이라 한쪽으로 덮어쓰지 말 것.
     """
     px = img.convert("RGB").load()
     w, h = img.size
     x0, y0, x1, y1 = (round(v) for v in box)
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    mw, mh = max(24, (x1 - x0) * cap_scale), max(24, (y1 - y0) * cap_scale)
+    mw, mh = max(24, (x1 - x0) * _SNAP_CAP), max(24, (y1 - y0) * _SNAP_CAP)
     bnd = (round(cx - mw / 2), round(cy - mh / 2), round(cx + mw / 2), round(cy + mh / 2))
-    for _ in range(max_iter):
-        sx, sy = max(0, bnd[0], x0 - pad), max(0, bnd[1], y0 - pad)
-        ex, ey = min(w - 1, bnd[2], x1 + pad), min(h - 1, bnd[3], y1 + pad)
+    for _ in range(_SNAP_ITER):
+        sx, sy = max(0, bnd[0], x0 - _SNAP_PAD), max(0, bnd[1], y0 - _SNAP_PAD)
+        ex, ey = min(w - 1, bnd[2], x1 + _SNAP_PAD), min(h - 1, bnd[3], y1 + _SNAP_PAD)
         xs, ys = [], []
         for y in range(sy, ey + 1):
             for x in range(sx, ex + 1):
-                if sum(px[x, y]) < 300:
+                if sum(px[x, y]) < INK_MAX:
                     xs.append(x)
                     ys.append(y)
         if not xs:
@@ -93,7 +105,7 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
 
     edge = [src.getpixel((x, y)) for x in range(src.width) for y in (0, 1, src.height - 2, src.height - 1)] \
          + [src.getpixel((x, y)) for y in range(src.height) for x in (0, 1, src.width - 2, src.width - 1)]
-    bg = tuple(int(statistics.median(c[i] for c in edge)) for i in range(3))
+    bg = _median_rgb(edge)
     base = Image.new("RGB", (CANVAS, CANVAS), bg)
     base.paste(src.resize((w, h), Image.LANCZOS), (ox, oy))
 
@@ -131,17 +143,13 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
     base.convert("RGBA").save(out / "base.png")
 
     mcx, mcy = T(*mouth_center)
-    # 눈 중심 — 부분 감김·눈 커짐이 이 점을 축으로 세로 스케일한다. 안 적으면 렌더가
-    # [256,258](정면 인물화 기준)로 폴백하는데, 화이트보드 그림처럼 얼굴이 위쪽에 있는
-    # 캐릭터는 축이 180px 넘게 어긋나 눈이 캔버스 밖으로 날아간다.
-    bs = list(eye_boxes.values())
+    # 눈 기하는 manifest 에 안 남긴다 — 렌더가 스프라이트의 잉크 프로파일을 직접 재기
+    # 때문에 소비자가 없다. 예전에 eyeCenter/eyeHalf 를 적었지만 눈꺼풀이 세로 스케일에서
+    # 오클루전으로 바뀌면서 읽는 쪽이 사라졌고, 값만 남으면 다음 사람이 렌더에 영향을
+    # 준다고 믿고 튜닝하게 된다.
     manifest = {
         "name": name,
         "pupilRange": 0, "browRange": 0, "jawDrop": jaw_drop,
-        "eyeCenter": [round(sum((b[0] + b[2]) / 2 for b in bs) / len(bs)),
-                      round(sum((b[1] + b[3]) / 2 for b in bs) / len(bs))],
-        # 눈 반높이 — 워프 앵커·폴백용. 눈꺼풀 압축은 스프라이트의 잉크 bbox 를 직접 쓴다.
-        "eyeHalf": round(sum((b[3] - b[1]) / 2 for b in bs) / len(bs)),
         "mouthCenter": [round(mcx), round(mcy)],
         "proceduralMouth": True,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},

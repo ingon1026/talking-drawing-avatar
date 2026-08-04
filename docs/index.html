@@ -328,7 +328,7 @@ function render(now) {
   if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
   else {
     draw("eye_L_open"); draw("eye_R_open");
-    const [gzx, gzy] = gaze(0, W);   // 슬라이더 없음 → 커서/감정채널/유휴 saccade
+    const [gzx, gzy] = gaze(W);   // 커서/감정채널/유휴 saccade
     const pr = manifest.pupilRange || 0;
     drawXY("pupil_L", gzx * pr, gzy * pr); drawXY("pupil_R", gzx * pr, gzy * pr);
   }

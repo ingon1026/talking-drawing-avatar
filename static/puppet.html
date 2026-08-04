@@ -199,7 +199,6 @@ const stage = $("stage2d");   // .stage 는 이제 2D·3D 두 개라 id 로 명�
 const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#5b8cff");
 const blinker = AvatarCore.makeBlink({
   autoBlink: () => $("autoBlink").checked,
-  intervalMs: () => 4000,
   duration: 140, jitter: 0.6,
 });
 const cursor = AvatarCore.makeCursorTracker(stage);
@@ -248,7 +247,6 @@ stage.addEventListener("click", () => {
 });
 $("addChar").onclick = () => $("charFile").click();
 $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.target.value = ""; };
-
 
 // ---------- 3D 헤드 (석고상 mark) ----------
 // three 자체는 워프가 이미 받아오지만, GLTFLoader(108KB)·mark.glb(41MB)·WebGLRenderer 씬 구성은
@@ -339,7 +337,7 @@ function render(now) {
     // 3D: 모프 = 실제 근육. applyMorphs 는 smooth 를 그대로 읽으므로 jawGain 증폭이 살아 있다
     // (증폭은 원래 3D 모프용 보정이라 여기선 되돌리지 않는 게 맞다 — 되돌리는 건 2D 픽셀 공식뿐).
     AvatarCore.applyMorphs(mounted.morphMeshes, smooth, blink);
-    const [gsx, gsy] = gaze3d(0, W);   // 엔진 채널 > 커서
+    const [gsx, gsy] = gaze3d(W);   // 엔진 채널 > 커서
     for (const e of mounted.eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
 
     // 머리: 사용자 드래그 + 발화 중 미세 끄덕임 + 엔진 head pose(있을 때만 — 현 체크포인트는 미출력)
@@ -369,7 +367,7 @@ function render(now) {
   // 눈썹 각도·연속 눈꺼풀은 코어가 담당한다 — 여기에 다시 적으면 코어 개선이 이 페이지에
   // 반영되지 않는다(실제로 그렇게 갈라져 있었다).
   AvatarCore.drawFaceParts(ctx, {
-    parts, manifest, W, blink, gaze: gaze(0, W),   // 엔진 채널 > 커서
+    parts, manifest, W, blink, gaze: gaze(W),   // 엔진 채널 > 커서
   });
   const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth) {

@@ -43,16 +43,13 @@ def redraw(cdir: Path, dry: bool) -> str | None:
         # 빌더는 base(눈이 아직 안 지워진 상태)에서 색을 뽑는다. 여기선 그 패치가 곧
         # eye_*_open 이므로 같은 픽셀을 보는 셈이다.
         color = ink_color(open_img, box)
-        closed = Image.open(cl).convert("RGBA")
-        px = closed.load()
-        for y in range(closed.height):
-            for x in range(closed.width):
-                a = px[x, y][3]
-                if a:
-                    px[x, y] = (*color, a)   # 알파(=획 모양·두께) 유지, 색만 교체
         changed.append(f"{side}:rgb{color}")
-        if not dry:
-            closed.save(cl)
+        if dry:
+            continue
+        # 알파(=획 모양·두께)는 그대로 두고 RGB 세 채널만 갈아끼운다.
+        closed = Image.open(cl).convert("RGBA")
+        solid = [Image.new("L", closed.size, c) for c in color]
+        Image.merge("RGBA", (*solid, closed.getchannel("A"))).save(cl)
     if not dry:
         for pv, state in (("preview.png", "open"), ("preview_blink.png", "closed")):
             if not (cdir / pv).exists():

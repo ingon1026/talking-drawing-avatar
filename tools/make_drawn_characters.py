@@ -19,7 +19,7 @@ CHARS = {
         mouth_center=(191, 138),
         mouth_style={"line": "#2b2b2b", "fill": "#c94f6d", "tongue": "#f2a0b5",
                      "teeth": "#ffffff", "width": 26},
-        jaw_drop=6, closed_eye=("#1a1a1a", 4),
+        jaw_drop=6, closed_eye=(None, 4),
     ),
     "stick": dict(
         src=ROOT / "test_2.png", name="졸라맨",
@@ -30,7 +30,7 @@ CHARS = {
         mouth_center=(145, 48),
         mouth_style={"line": "#2e2e2e", "fill": "#3a3a3a", "tongue": "#6a6a6a",
                      "teeth": "#e8e8e8", "width": 20},
-        jaw_drop=5, closed_eye=("#1a1a1a", 3),
+        jaw_drop=5, closed_eye=(None, 3),
     ),
 }
 
