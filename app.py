@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import edge_tts
@@ -27,7 +28,19 @@ OUT.mkdir(exist_ok=True)
 
 DEFAULT_VOICE = "ko-KR-InJoonNeural"   # 남성 기본 — 클라이언트가 voice 를 안 보낼 때만 쓰인다
 
-app = FastAPI(title="말하는 그림 아바타")
+
+@asynccontextmanager
+async def lifespan(app):
+    # 서버가 실제로 뜰 때만 백그라운드 스레드를 띄운다. 예전엔 모듈 최상위에서 start() 해서
+    # `import app` 만 해도(테스트·tools/) 워밍업 스레드가 돌았고, 그 스레드가 백그라운드로
+    # numpy 를 끌어오는 사이 메인의 pytest.approx 가 반쯤 초기화된 numpy 를 잡아
+    # test_emotion_api 가 들쭉날쭉 실패했다.
+    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=warmup, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="말하는 그림 아바타", lifespan=lifespan)
 jobs: dict[str, dict] = {}
 work_q: "queue.Queue[str]" = queue.Queue()
 pipeline = AvatarPipeline()
@@ -208,9 +221,6 @@ def worker():
                 wav_p.unlink()
 
 
-threading.Thread(target=worker, daemon=True).start()
-
-
 def warmup():
     """기동 직후 경량 발화 엔진만 미리 로드 — 재시작 후 첫 발화 3.9s(neurosync)/2.4s(a2f) 제거.
     JoyVASA(영상, 콜드 26s+)는 제외: 영상 안 쓰는 세션까지 매 재기동마다 GPU를 태우게 된다."""
@@ -226,9 +236,6 @@ def warmup():
         except Exception:
             pass   # 엔진 하나가 없거나 실패해도 서버는 정상 기동
     w.unlink(missing_ok=True)
-
-
-threading.Thread(target=warmup, daemon=True).start()
 
 
 @app.post("/api/speak")
