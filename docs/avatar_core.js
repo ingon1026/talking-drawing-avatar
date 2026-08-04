@@ -204,7 +204,9 @@ window.AvatarCore = (() => {
   // ---------- 감정 프리셋 (studio3d 버전이 superset 이라 그것으로 통합) ----------
   const EMOTIONS = {
     neutral: {},
-    joy: { mouthsmileleft: 0.55, mouthsmileright: 0.55, cheeksquintleft: 0.45, cheeksquintright: 0.45, eyesquintleft: 0.25, eyesquintright: 0.25 },
+    // eyesquint 가 0.25 이던 시절엔 눈꺼풀이 14%만 닫혀 눈웃음이 보이지 않았다 —
+    // 진짜 웃음(Duchenne)의 핵심 채널이라 입꼬리에 준하는 값을 준다.
+    joy: { mouthsmileleft: 0.55, mouthsmileright: 0.55, cheeksquintleft: 0.45, cheeksquintright: 0.45, eyesquintleft: 0.5, eyesquintright: 0.5 },
     sad: { mouthfrownleft: 0.5, mouthfrownright: 0.5, browinnerup: 0.7, mouthshrugupper: 0.2 },
     angry: { browdownleft: 0.85, browdownright: 0.85, nosesneerleft: 0.4, nosesneerright: 0.4, mouthpressleft: 0.4, mouthpressright: 0.4, jawforward: 0.25 },
     surprise: { browinnerup: 0.6, browouterupleft: 0.75, browouterupright: 0.75, eyewideleft: 0.8, eyewideright: 0.8, jawopen: 0.3 },
@@ -271,15 +273,20 @@ window.AvatarCore = (() => {
   // autoBlink:()=>bool, intervalMs:()=>ms 는 매 프레임 라이브 조회. duration/jitter 상수 페이지별
   // (puppet/docs 140·0.6·슬라이더, studio3d 150·0.8·3500). 상태는 클로저에 캡슐화.
   function makeBlink({ autoBlink, intervalMs, duration, jitter }) {
-    let blinkUntil = 0, nextAutoBlink = performance.now() + 4000;
+    let blinkAt = -1e9, nextAutoBlink = performance.now() + 4000;
     return {
-      trigger() { blinkUntil = performance.now() + duration; },
+      trigger() { blinkAt = performance.now(); },
+      // 0~1 연속값. 예전엔 (now < blinkUntil ? 1 : 0) 사각파여서 눈이 순간이동으로 닫혔고,
+      // 소비 측의 blink>0.5 이진 분기와 맞물려 부분 감김이 원리적으로 표현 불가능했다.
+      // 실제 눈깜빡임은 감기는 쪽이 뜨는 쪽보다 빠르다 — 앞 35%를 감김, 나머지를 뜸에 준다.
       value(now) {
         if (autoBlink() && now > nextAutoBlink) {
-          blinkUntil = now + duration;
+          blinkAt = now;
           nextAutoBlink = now + intervalMs() * (0.7 + Math.random() * jitter);  // 자연스러운 지터
         }
-        return now < blinkUntil ? 1 : 0;
+        const t = (now - blinkAt) / duration;
+        if (t < 0 || t > 1) return 0;
+        return t < 0.35 ? t / 0.35 : 1 - (t - 0.35) / 0.65;
       },
     };
   }
@@ -515,7 +522,8 @@ window.AvatarCore = (() => {
       },
       vert: `
         uniform vec2 uJawC, uCornerL, uCornerR;
-        uniform float uJaw, uSmileL, uSmileR, uRound, uFrownL, uFrownR;
+        uniform float uJaw, uSmileL, uSmileR, uRound, uFrownL, uFrownR, uSneer;
+        uniform vec2 uNoseC;
         varying vec2 vUv;
         float gk(vec2 p, vec2 c, float s){ vec2 d = p - c; return exp(-dot(d, d) / (2.0 * s * s)); }
         void main() {
@@ -529,6 +537,9 @@ window.AvatarCore = (() => {
           disp += vec2(-8.0,  0.0) * uRound  * gk(img, uCornerR, 32.0);
           disp += vec2(-3.0,  8.0) * uFrownL * gk(img, uCornerL, 32.0);   // 찡그림 (내림)
           disp += vec2( 3.0,  8.0) * uFrownR * gk(img, uCornerR, 32.0);
+          // 코 찡긋 — 화남의 유일한 상단 얼굴 변형. 앵커가 입뿐이라 화남이 이미지를
+          // 0픽셀 변형하던 문제를 푼다. 코를 위로 당겨 콧등에 주름이 잡히는 인상을 준다.
+          disp += vec2( 0.0, -7.0) * uSneer  * gk(img, uNoseC,   30.0);
           vec2 pos = position.xy;
           pos.x += disp.x; pos.y -= disp.y;                          // 이미지 y-down → plane y-up
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 0.0, 1.0);
@@ -555,6 +566,8 @@ window.AvatarCore = (() => {
               uJawC: { value: new T.Vector2(256, 378) },
               uCornerL: { value: new T.Vector2(220, 340) },
               uCornerR: { value: new T.Vector2(292, 340) },
+              uNoseC: { value: new T.Vector2(256, 300) },
+              uSneer: { value: 0 },
               uJaw: { value: 0 }, uSmileL: { value: 0 }, uSmileR: { value: 0 },
               uRound: { value: 0 }, uFrownL: { value: 0 }, uFrownR: { value: 0 },
             },
@@ -591,6 +604,9 @@ window.AvatarCore = (() => {
         this.material.uniforms.uJawC.value.set(mc[0], mc[1] + 38);
         this.material.uniforms.uCornerL.value.set(mc[0] - mw * 1.2, mc[1]);
         this.material.uniforms.uCornerR.value.set(mc[0] + mw * 1.2, mc[1]);
+        // 코는 입 중심에서 위로 — manifest 에 noseCenter 가 있으면 그걸 쓴다
+        const nc = manifest.noseCenter || [mc[0], mc[1] - 44];
+        this.material.uniforms.uNoseC.value.set(nc[0], nc[1]);
       },
       render() {
         if (!this.ready || !this.texture) return;
@@ -601,6 +617,7 @@ window.AvatarCore = (() => {
         u.uRound.value = roundness(W);
         u.uFrownL.value = W("mouthfrownleft");
         u.uFrownR.value = W("mouthfrownright");
+        u.uSneer.value = avgLR(W, "nosesneer");
         this.renderer.render(this.scene, this.camera);
       },
     };
@@ -818,6 +835,83 @@ window.AvatarCore = (() => {
   // ctx: 2D 컨텍스트(512²), parts: 이미지 맵, manifest: 캐릭터 튜닝값,
   // W: 채널 접근자, blink: 깜빡임(자동+미러 max 결합), gaze: [gx, gy],
   // opts.warp: makeWarp 인스턴스(선택), opts.clearBg: 배경 채우기 여부(클린 모드면 false)
+  // 눈썹 기울기 최대 각(rad) — 12px 이동과 균형이 맞는 크기로 실측 조정.
+  const BROW_TILT = 0.22;
+
+  // 눈썹을 자기 중심에서 회전시켜 그린다. 스프라이트는 512² 전체 캔버스에 그려져 있으므로
+  // 회전 피벗은 manifest 의 눈 중심(없으면 캔버스 중앙 위쪽)을 쓴다.
+  function drawBrow(name, dy, tilt, manifest) {
+    const img = _partsRef && _partsRef[name];
+    if (!img) return;
+    const c = _ctxRef;
+    if (!tilt) { c.drawImage(img, 0, dy); return; }
+    const [px, py] = manifest.browPivot || [256, 250];
+    c.save();
+    c.translate(px, py + dy); c.rotate(tilt); c.translate(-px, -py);
+    c.drawImage(img, 0, 0);
+    c.restore();
+  }
+  let _partsRef = null, _ctxRef = null;   // drawBrow/drawEyes 가 쓰는 프레임 지역 참조
+
+  // 연속 눈꺼풀 렌더. lid 0~1 을 두 스프라이트의 알파 크로스페이드 + 뜬 눈의 세로 눌림으로
+  // 표현한다 — 중간값에서 "반쯤 감긴 눈"이 실제로 보이게 하려면 둘 다 필요하다
+  // (크로스페이드만 하면 두 눈이 겹쳐 보이고, 스케일만 하면 감은 눈 선이 안 나온다).
+  function drawEyes(ctx, parts, drawXY, lid, gaze, manifest, wide = 0) {
+    const draw = (n, dy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dy);
+    if (lid >= 0.995) { draw("eye_L_closed"); draw("eye_R_closed"); return; }
+    const [ex, ey] = manifest.eyeCenter || [256, 258];
+    // eyeWide 는 눈을 세로로 키운다 — 놀람·무서움이 다른 감정과 구분되는 가장 강한 신호인데
+    // 예전엔 이 채널이 픽셀에 아무 영향이 없었다(EMOTIONS 에만 존재).
+    if (wide > 0.01 && lid <= 0.01) {
+      ctx.save();
+      ctx.translate(ex, ey); ctx.scale(1, 1 + wide * 0.45); ctx.translate(-ex, -ey);
+      draw("eye_L_open"); draw("eye_R_open");
+      const pr0 = manifest.pupilRange || 0;
+      drawXY("pupil_L", gaze[0] * pr0, gaze[1] * pr0); drawXY("pupil_R", gaze[0] * pr0, gaze[1] * pr0);
+      ctx.restore();
+      return;
+    }
+    if (lid > 0.01) {   // 뜬 눈을 눈 중심 기준으로 세로로 눌러 부분 감김을 만든다
+      ctx.save();
+      ctx.translate(ex, ey); ctx.scale(1, Math.max(0.06, 1 - lid)); ctx.translate(-ex, -ey);
+      ctx.globalAlpha = 1;
+      draw("eye_L_open"); draw("eye_R_open");
+      const pr = manifest.pupilRange || 0;
+      drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
+      ctx.restore();
+      ctx.globalAlpha = lid;   // 감은 눈 선을 겹쳐 올려 눈꺼풀이 닫히는 인상을 준다
+      draw("eye_L_closed"); draw("eye_R_closed");
+      ctx.globalAlpha = 1;
+      return;
+    }
+    draw("eye_L_open"); draw("eye_R_open");
+    const pr = manifest.pupilRange || 0;
+    drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
+  }
+
+  // 눈썹 + 눈 (파츠 스프라이트 기반). drawChar2D 와 puppet.html 이 함께 쓴다 —
+  // 한쪽에만 개선이 들어가는 사고를 막으려고 한 곳에 둔다.
+  function drawFaceParts(ctx, { parts, manifest, W, blink, gaze }) {
+    _partsRef = parts; _ctxRef = ctx;
+    const drawXY = (n, dx, dy) => parts[n] && ctx.drawImage(parts[n], dx, dy);
+    const bR = manifest.browRange || 0;
+    const browUp = -bR * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
+                 + bR * 0.8 * (W("browdownleft") + W("browdownright")) / 2;   // 찡그림은 반대로 내림
+    // 눈썹 각도 — 위아래 이동만으로는 화남·슬픔이 구분되지 않는다(둘 다 같은 눈썹).
+    // 안쪽 끝을 내리면 찡그림(화남), 올리면 팔자(슬픔·무서움)가 된다. 좌우 대칭이라 부호 반전.
+    const browTilt = (W("browdownleft") + W("browdownright")) / 2 * BROW_TILT
+                   - W("browinnerup") * BROW_TILT * 0.8;
+    drawBrow("brow_L", browUp, +browTilt, manifest);
+    drawBrow("brow_R", browUp, -browTilt, manifest);
+
+    // 눈 — 이진 교체 대신 연속 눈꺼풀. lid 0=완전히 뜸, 1=완전히 감김.
+    // eyeSquint(눈웃음)는 부분적으로 감기게, eyeWide(놀람·무서움)는 음수로 더 뜨게 한다.
+    const squint = (W("eyesquintleft") + W("eyesquintright")) / 2;
+    const wide = (W("eyewideleft") + W("eyewideright")) / 2;
+    const lid = clamp01(Math.max(blink, squint * 0.8) - wide * 0.35);
+    drawEyes(ctx, parts, drawXY, lid, gaze, manifest, wide);
+  }
+
   function drawChar2D(ctx, { parts, manifest, W, blink, gaze, warp, clearBg = true, head }) {
     if (!parts.base || !manifest) return false;
     const warpOn = !!(warp && warp.ready);
@@ -832,21 +926,13 @@ window.AvatarCore = (() => {
     }
     const draw = (n, dy = 0) => parts[n] && ctx.drawImage(parts[n], 0, dy);
     const drawXY = (n, dx, dy) => parts[n] && ctx.drawImage(parts[n], dx, dy);
+    _partsRef = parts; _ctxRef = ctx;   // drawBrow 가 쓰는 프레임 지역 참조
     // 워프가 켜져 있으면 base 는 WebGL 레이어가 그리므로 여기선 생략
     if (!warpOn) {
       if (clearBg) { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 512, 512); }
       draw("base");
     }
-    const bR = manifest.browRange || 0;
-    const browUp = -bR * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
-                 + bR * 0.8 * (W("browdownleft") + W("browdownright")) / 2;   // 찡그림은 반대로 내림
-    draw("brow_L", browUp); draw("brow_R", browUp);
-    if (blink > 0.5) { draw("eye_L_closed"); draw("eye_R_closed"); }
-    else {
-      draw("eye_L_open"); draw("eye_R_open");
-      const pr = manifest.pupilRange || 0;
-      drawXY("pupil_L", gaze[0] * pr, gaze[1] * pr); drawXY("pupil_R", gaze[0] * pr, gaze[1] * pr);
-    }
+    drawFaceParts(ctx, { parts, manifest, W, blink, gaze });
     const jawDy = warp ? warp.jawOverlayDy(W("jawopen"), warpOn, manifest)
                        : W("jawopen") * (manifest.jawDrop || 8);
     drawVectorMouth(ctx, W, manifest, jawDy);
@@ -1292,6 +1378,6 @@ window.AvatarCore = (() => {
     EMOTIONS, makeEmotion, makeBlink, makeCursorTracker, makeGaze, makeHeadWander,
     makeMouthPicker, drawVectorMouth, drawSpriteMouth, makeWarp, speakFlow, speakWithEmotion,
     bindStatus, makeAnnotator, makeMic, chat, makeChat, makeShowcase, pickReaction, makeMirror, irisGaze, makeMirrorPanel,
-    mountHead3D, applyMorphs, drawChar2D, setLocale,
+    mountHead3D, applyMorphs, drawChar2D, drawFaceParts, setLocale,
   };
 })();

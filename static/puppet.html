@@ -384,19 +384,11 @@ function render(now) {
   const draw = (name, dx = 0, dyy = 0) => parts[name] && ctx.drawImage(parts[name], dx, dyy);
 
   if (!warpOn) draw("base");   // 워프 OFF/미지원: base를 2D로 그림 (폴백). ON이면 WebGL이 담당.
-  const browUp = -manifest.browRange * Math.min(1, W("browinnerup") + (W("browouterupleft") + W("browouterupright")) / 2)
-               + manifest.browRange * 0.8 * (W("browdownleft") + W("browdownright")) / 2;
-  draw("brow_L", 0, browUp);
-  draw("brow_R", 0, browUp);
-
-  if (blink > 0.5) {
-    draw("eye_L_closed"); draw("eye_R_closed");
-  } else {
-    draw("eye_L_open"); draw("eye_R_open");
-    const [gsx, gsy] = gaze(+$("ovGaze").value, W);  // 슬라이더 > 엔진 채널 > 커서
-    draw("pupil_L", gsx * manifest.pupilRange, gsy * manifest.pupilRange);
-    draw("pupil_R", gsx * manifest.pupilRange, gsy * manifest.pupilRange);
-  }
+  // 눈썹 각도·연속 눈꺼풀은 코어가 담당한다 — 여기에 다시 적으면 코어 개선이 이 페이지에
+  // 반영되지 않는다(실제로 그렇게 갈라져 있었다).
+  AvatarCore.drawFaceParts(ctx, {
+    parts, manifest, W, blink, gaze: gaze(+$("ovGaze").value, W),   // 슬라이더 > 엔진 채널 > 커서
+  });
   const jawDy = warp.jawOverlayDy(W("jawopen"), warpOn, manifest);
   if (manifest.proceduralMouth) {
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);  // 근육 채널 직접 구동 (기본)

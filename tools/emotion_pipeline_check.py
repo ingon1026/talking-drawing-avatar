@@ -65,6 +65,20 @@ def _js_object(name: str) -> dict[str, dict[str, float]]:
     return out
 
 
+def _live_channels() -> set[str]:
+    """2D 렌더가 실제로 읽는 채널 — 프리셋에만 있고 픽셀에 영향이 없는 채널을 가려내려는 것.
+
+    표정 프리셋에 값을 적어도 drawFaceParts/워프 셰이더가 그 채널을 안 읽으면 화면은
+    그대로다(화남이 이미지를 0픽셀 변형하던 게 이 경우였다). 소비 지점은 `W("name")`
+    아니면 좌우를 묶어 읽는 `avgLR(W, "prefix")` 둘뿐이라 그 둘만 훑는다.
+    """
+    src = CORE_JS.read_text(encoding="utf-8")
+    live = {m.lower() for m in re.findall(r'W\(\s*"([a-zA-Z]+)"', src)}
+    for p in re.findall(r'avgLR\(\s*W\s*,\s*"([a-zA-Z]+)"', src):
+        live |= {p.lower() + "left", p.lower() + "right"}
+    return live
+
+
 def _width(s: str) -> int:
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
 
@@ -131,6 +145,19 @@ def main():
             if miss:
                 print(f"      경고: {emo} 프리셋이 {', '.join(miss)} 에 없습니다 — 실제로는 neutral 로 조용히 폴백합니다.")
         print()
+
+    live = _live_channels()
+    hit = tot = 0
+    print("2D 렌더에 실제로 반영되는 채널 수 (프리셋에만 있는 채널은 화면에 안 나온다)")
+    for emo, preset in emotions.items():
+        if not preset:
+            continue
+        dead = sorted(c for c in preset if c not in live)
+        hit += len(preset) - len(dead)
+        tot += len(preset)
+        print(f"  {emo:9s} {len(preset) - len(dead)}/{len(preset)}"
+              f"  {'죽은 채널: ' + ', '.join(dead) if dead else ''}")
+    print(f"  합계 {hit}/{tot}")
 
 
 if __name__ == "__main__":
