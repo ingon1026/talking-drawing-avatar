@@ -214,8 +214,11 @@ const annotator = AvatarCore.makeAnnotator({
   cv, ctx, setStatus, needDataUrl: true,
   onCreate: async (annot, name, done) => {   // 서버 POST → character_builder 로 캐릭터 생성
     const eyeR = Math.max(6, 0.03 * Math.max(annot.iw, annot.ih));
+    // 실눈 캐릭터는 눈이 이미 감긴 선이라 눈꺼풀 연출이 선을 토막낸다 — 그림만 보고
+    // 자동 판별하려 했지만 작은 눈과 안 갈려서 등록할 때 한 번 묻는다.
+    const eyeBlink = !confirm("이 그림은 눈을 감고 있나요?\n\n확인 = 실눈 캐릭터 (깜빡임을 끕니다)\n취소 = 보통 눈");
     const body = {
-      name, image_b64: annot.dataUrl,
+      name, image_b64: annot.dataUrl, eye_blink: eyeBlink,
       eye_l: [...annot.eyeL, eyeR], eye_r: [...annot.eyeR, eyeR],
       mouth_box: annot.box, mouth_center: annot.mouthC,
     };

@@ -31,7 +31,7 @@ def _border_median(img, box, ring=4):
 
 def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                     mouth_style=None, jaw_drop=6, closed_eye=("#1a1a1a", 4),
-                    deletable=False, persona=None):
+                    deletable=False, persona=None, eye_blink=True):
     """eyes: {"L": (cx, cy, 반박스), "R": ...} / mouth_box: (x0,y0,x1,y1) / 좌표는 원본 픽셀."""
     src = Image.open(src_path).convert("RGB")
     s = min(CANVAS / src.width, CANVAS / src.height)
@@ -85,6 +85,9 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                       round(sum(p[1] for p in ecs) / len(ecs))],
         # 눈 반높이 — 눈꺼풀 클립 경계. 반박스가 곧 눈 높이의 절반이다.
         "eyeHalf": round(sum(hb for _, _, hb in eyes.values()) / len(eyes) * s),
+        # 이미 감긴 눈(실눈)은 깜빡이지 않는다 — 가릴 눈알이 없어 내리면 선만 토막난다.
+        # 그림에서 자동 판별하려 했지만(선 밀도·두께) 실눈과 작은 눈이 안 갈려 물어보는 쪽을 택했다.
+        "eyeBlink": eye_blink,
         "mouthCenter": [round(mcx), round(mcy)],
         "proceduralMouth": True,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},

@@ -925,7 +925,10 @@ window.AvatarCore = (() => {
     // eyeSquint(눈웃음)는 부분적으로 감기게, eyeWide(놀람·무서움)는 음수로 더 뜨게 한다.
     const squint = (W("eyesquintleft") + W("eyesquintright")) / 2;
     const wide = (W("eyewideleft") + W("eyewideright")) / 2;
-    const lid = clamp01(Math.max(blink, squint * 0.8) - wide * 0.35);
+    // eyeBlink:false = 원본이 이미 감긴 눈(실눈). 가릴 눈알이 없어 눈꺼풀 연출이
+    // 선을 토막내기만 하므로 눈은 원본 그대로 두고 감정은 입·눈썹·워프가 맡는다.
+    const lid = manifest.eyeBlink === false ? 0
+              : clamp01(Math.max(blink, squint * 0.8) - wide * 0.35);
     drawEyes(ctx, parts, drawXY, lid, gaze, manifest);
   }
 

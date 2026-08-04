@@ -9,6 +9,7 @@
     255
   ],
   "eyeHalf": 29,
+  "eyeBlink": true,
   "mouthCenter": [
     256,
     336

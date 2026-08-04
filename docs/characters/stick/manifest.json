@@ -8,6 +8,7 @@
     34
   ],
   "eyeHalf": 10,
+  "eyeBlink": true,
   "mouthCenter": [
     256,
     63
