@@ -22,6 +22,9 @@
   .warp-shake canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   #gl { z-index: 0; }
   #cv { z-index: 1; }
+  /* 3D 스테이지 — 2D 와 형제로 두고 한쪽만 표시한다 (배경은 어둡게, 드래그로 헤드 회전) */
+  #stage3d { background: #0d0d12; cursor: grab; }
+  #cv3d { width: 100%; height: 100%; display: block; }
   form { display: flex; gap: 8px; margin-top: 16px; }
   input[type=text] {
     flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35;
@@ -51,15 +54,19 @@
   #chatlog .bot { color: #e8e8ef; }
   #micBtn.on { background: #e2647e; }
 </style>
+<!-- GLTFLoader.js 가 `from 'three'` 로 three 를 참조한다 — 이 importmap 이 없으면 3D 로더가 로드 실패한다.
+     워프(makeWarp)가 쓰는 URL 과 같은 모듈이라 브라우저 모듈 캐시를 공유한다. -->
+<script type="importmap">{ "imports": { "three": "/static/vendor/three.module.js" } }</script>
 </head>
 <body>
 <main>
-  <h1>🎭 실시간 퍼펫 아바타 <span><a href="/3d" style="color:#76b900">NVIDIA 3D 스튜디오 →</a> &nbsp; <a href="/">영상 모드</a></span></h1>
+  <h1>🎭 실시간 퍼펫 아바타 <span><a href="/">영상 모드</a></span></h1>
 
-  <div class="stage"><div class="warp-shake" id="shake">
+  <div class="stage" id="stage2d"><div class="warp-shake" id="shake">
     <canvas id="gl" width="512" height="512"></canvas>
     <canvas id="cv" width="512" height="512"></canvas>
   </div></div>
+  <div class="stage" id="stage3d" style="display:none"><canvas id="cv3d"></canvas></div>
 
   <form id="form">
     <button id="micBtn" type="button" class="alt" title="마이크로 말 걸기" style="display:none">🎤</button>
@@ -144,16 +151,34 @@ async function loadCharacter(id) {
   warp.setCharacter();  // 워프 준비됐으면 새 base 텍스처·커널 중심 반영 (준비 전이면 no-op, init이 이어받음)
 }
 
+// 3D 헤드는 서버 캐릭터 목록에 없는 고정 항목 — 드롭다운 값이 2D/3D 모드의 단일 진실이다.
+const MARK3D = "__mark3d__";
+const is3D = () => $("character").value === MARK3D;
+
 let charList = [];
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
   charList = list;
   const sel = $("character");
-  sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-  sel.onchange = () => { loadCharacter(sel.value); updateDelBtn(); };
-  const pick = selectId || (list.length && list[0].id);
-  if (pick) { sel.value = pick; await loadCharacter(pick); }
+  sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
+    + `<option value="${MARK3D}">🗿 석고상 (NVIDIA mark · 3D)</option>`;
+  sel.onchange = applyMode;
+  const pick = selectId && [...sel.options].some(o => o.value === selectId)
+    ? selectId : (list.length ? list[0].id : MARK3D);
+  sel.value = pick;
+  await applyMode();
+}
+
+// 모드 전환: 스테이지 표시/숨김 + 해당 모드의 에셋 로드. 드롭다운 변경과 초기 진입이 같은 경로를 탄다.
+async function applyMode() {
+  const on3d = is3D();
+  $("stage3d").style.display = on3d ? "" : "none";
+  $("stage2d").style.display = on3d ? "none" : "";
+  // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 3D 에선 숨긴다
+  $("addChar").style.display = on3d ? "none" : "";
   updateDelBtn();
+  if (on3d) await ensure3D().catch(e => setStatus("3D 로드 실패: " + e.message, true));
+  else await loadCharacter($("character").value);
 }
 
 function updateDelBtn() {
@@ -174,7 +199,7 @@ let smooth = {};          // 지수 평활된 현재 가중치
 let jawGain = 1;   // shapeAnim 이 이번 발화에 적용한 jawopen 증폭 — 발화 중에만 되돌린다
 const W = k => (k === "jawopen" ? (smooth[k] || 0) / jawGain : (smooth[k] || 0));
 
-const stage = document.querySelector(".stage");
+const stage = $("stage2d");   // .stage 는 이제 2D·3D 두 개라 id 로 명시
 
 // ---------- 공유 렌더 코어 인스턴스 (avatar_core.js) ----------
 const emo = AvatarCore.makeEmotion(document.querySelectorAll("#emotions button"), "#5b8cff");
@@ -234,17 +259,76 @@ $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.targe
 $("blinkBtn").onclick = () => blinker.trigger();
 $("blinkInterval").oninput = e => $("blinkIntervalVal").textContent = e.target.value + "초";
 
+// ---------- 3D 헤드 (석고상 mark) ----------
+// three 자체는 워프가 이미 받아오지만, GLTFLoader(108KB)·mark.glb(41MB)·WebGLRenderer 씬 구성은
+// 3D 캐릭터를 처음 고르는 순간까지 미룬다 — 2D 만 쓰는 사용자가 41MB 를 내려받지 않게.
+const canvas3d = $("cv3d");
+let three3d = null;    // { THREE, renderer, scene, camera, group } — 최초 1회만 구성
+let mounted = null;    // mountHead3D 결과 { sceneNode, morphMeshes, eyes }
+let init3d = null;     // 진행 중인 초기화 프라미스 (전환을 오가도 중복 로드 방지)
+const ensure3D = () => (init3d ||= init3D().catch(e => { init3d = null; throw e; }));
+
+async function init3D() {
+  setStatus("3D 모델 로딩 중… (41MB, 최초 1회)");
+  const THREE = await import("three");
+  const { GLTFLoader } = await import("/static/vendor/GLTFLoader.js");
+
+  const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d0d12);
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 1000);
+  scene.add(new THREE.HemisphereLight(0xdfe6ff, 0x2a2018, 1.1));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1.5, 2, 3); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x77aaff, 1.0); rim.position.set(-2, 1, -2); scene.add(rim);
+  const group = new THREE.Group();
+  scene.add(group);
+
+  const resize = () => {
+    const r = canvas3d.parentElement.getBoundingClientRect();
+    if (!r.width) return;   // 2D 모드라 숨겨진 동안엔 0 — 그때 setSize 하면 캔버스가 0으로 죽는다
+    renderer.setSize(r.width, r.height, false);
+    camera.aspect = 1; camera.updateProjectionMatrix();
+  };
+  new ResizeObserver(resize).observe(canvas3d.parentElement);
+
+  const gltf = await new Promise((res, rej) => new GLTFLoader().load(
+    "/static/assets3d/mark.glb", res, undefined, () => rej(new Error("mark.glb 를 받지 못했습니다"))));
+  // 프레이밍·눈알 구체·모프 수집은 코어에 있다 (headFrac 1 = 머리만 있는 석고 모델)
+  const r = AvatarCore.mountHead3D(THREE, { group, camera, gltf, cfg: { eyeSpheres: true, headFrac: 1 }, prev: null });
+  if (!r) throw new Error("이 모델에 표정 모프가 없습니다");
+  mounted = r;
+  three3d = { THREE, renderer, scene, camera, group };
+  resize();
+  setStatus("");
+}
+
+// 드래그로 헤드 회전 (3D 전용 상태 — 2D 에선 읽히지 않는다)
+let dragging = false, px = 0, py = 0, userYaw = 0, userPitch = 0, nod = 0;
+canvas3d.addEventListener("pointerdown", e => { dragging = true; px = e.clientX; py = e.clientY; });
+addEventListener("pointerup", () => dragging = false);
+addEventListener("pointermove", e => {
+  if (!dragging) return;
+  userYaw += (e.clientX - px) * 0.005; userPitch += (e.clientY - py) * 0.003;
+  userPitch = Math.max(-0.4, Math.min(0.4, userPitch));
+  px = e.clientX; py = e.clientY;
+});
+const gaze3d = AvatarCore.makeGaze(AvatarCore.makeCursorTracker(canvas3d), { mulX: 0.8, mulY: 0.5 });
+
 // ---------- 렌더 루프 ----------
 
+// 두 모드가 공유하는 구간은 "표정 파이프라인" 전체 — smoothStep · jawGain 되돌리기 · 슬라이더
+// 오버라이드 · followTrack · applyMax · blink. 여기까지가 렌더러와 무관한 채널값 계산이고,
+// 그 아래부터가 3D 모프 / 2D 픽셀로 갈라지는 지점이라 분기를 정확히 여기에 둔다.
 function render(now) {
   requestAnimationFrame(render);
-  if (annotator.active()) {
+  if (annotator.active()) {   // 어노테이션은 2D 캔버스 전용 (3D 에선 addChar 자체를 숨김)
     shakeEl.style.transform = "none";       // 어노테이션 중엔 흔들림 없음 (getBoundingClientRect 정합 유지)
     glCanvas.style.visibility = "hidden";   // 워프 캔버스 숨김
     annotator.draw();
     return;
   }
-  if (!parts.base) return;
+  if (is3D() ? !mounted : !parts.base) return;
 
   // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
   AvatarCore.smoothStep(smooth, AvatarCore.weightsFromAnim(anim, audio));
@@ -255,15 +339,38 @@ function render(now) {
   jawGain = (anim && !audio.paused && !audio.ended) ? (anim.jawGain || 1) : 1;
 
   // 수동 오버라이드 (슬라이더·감정 프리셋은 base와 max 결합)
-  const ov = { jawopen: +$("ovJaw").value, browinnerup: +$("ovBrow").value };
-  const smileOv = +$("ovSmile").value;
+  const smileOv = +$("ovSmile").value, browOv = +$("ovBrow").value;
+  smooth.jawopen = Math.max(smooth.jawopen || 0, +$("ovJaw").value);
   for (const k of ["mouthsmileleft", "mouthsmileright"]) smooth[k] = Math.max(smooth[k] || 0, smileOv);
-  for (const k in ov) smooth[k] = Math.max(smooth[k] || 0, ov[k]);
+  // 눈썹 슬라이더가 닿는 채널은 모드별로 다르다 — 2D 파츠는 눈썹이 한 장이라 browinnerup 하나로
+  // 충분하지만 3D 는 ARKit 3채널을 다 올려야 눈썹 전체가 움직인다. 각 모드의 기존 동작을 그대로 둔다.
+  for (const k of is3D() ? ["browinnerup", "browouterupleft", "browouterupright"] : ["browinnerup"])
+    smooth[k] = Math.max(smooth[k] || 0, browOv);
   // 문장이 바뀌면 표정도 따라 전환 (발화 중에만) — applyMax·headWander 보다 먼저 갱신
   if (anim && anim.emotionTrack && !audio.paused && !audio.ended) emo.followTrack(anim.emotionTrack, audio.currentTime);
   emo.applyMax(smooth, !!(anim && !audio.paused && !audio.ended));   // 발화 중이면 감정 유지, 유휴면 자동 감정 감쇠
   const blink = Math.max(blinker.value(now), +$("ovBlink").value,
                          Math.max(W("eyeblinkleft"), W("eyeblinkright")));
+
+  // ===== 여기부터 렌더러별 분기 =====
+  if (is3D()) {
+    // 3D: 모프 = 실제 근육. applyMorphs 는 smooth 를 그대로 읽으므로 jawGain 증폭이 살아 있다
+    // (증폭은 원래 3D 모프용 보정이라 여기선 되돌리지 않는 게 맞다 — 되돌리는 건 2D 픽셀 공식뿐).
+    AvatarCore.applyMorphs(mounted.morphMeshes, smooth, blink);
+    const [gsx, gsy] = gaze3d(+$("ovGaze").value, W);  // 슬라이더 > 엔진 채널 > 커서
+    for (const e of mounted.eyes) e.rotation.set(gsy * 0.3, gsx * 0.4, 0);
+
+    // 머리: 사용자 드래그 + 발화 중 미세 끄덕임 + 엔진 head pose(있을 때만 — 현 체크포인트는 미출력)
+    nod = 0.85 * nod + 0.15 * (smooth.jawopen || 0);   // 끄덕임도 3D 스케일(증폭 후) 기준
+    let hYaw = 0, hPitch = 0, hRoll = 0;
+    if (anim && anim.head && !audio.paused && !audio.ended) {
+      const hf = anim.head[Math.min(Math.floor(audio.currentTime * anim.fps), anim.head.length - 1)];
+      hYaw = hf[0] * Math.PI / 180; hPitch = hf[1] * Math.PI / 180; hRoll = hf[2] * Math.PI / 180;
+    }
+    three3d.group.rotation.set(userPitch + nod * 0.04 + hPitch, userYaw + hYaw, hRoll);
+    three3d.renderer.render(three3d.scene, three3d.camera);
+    return;   // headWander(2D 전용 CSS 변환)·워프·파츠 드로잉은 3D 에서 돌면 안 된다
+  }
 
   // 머리 움직임: 발화 에너지(끄덕임) + 느린 표류 + 잔잔한 사인
   const sway = anim && !audio.paused ? 1 : 0.5;
@@ -311,7 +418,10 @@ const chatCtl = AvatarCore.makeChat({
   speak, logEl: $("chatlog"), botName: "아바타", placeholderOn: "아바타에게 말을 걸어보세요…",
   chatModeEl: $("chatMode"), clearBtnEl: $("clearChat"), textEl: $("text"),
   sendEl: $("send"), micBtnEl: $("micBtn"), formEl: $("form"), statusSet: setStatus,
-  getPersona: () => manifest.persona,   // 선택된 캐릭터 성격을 대화에 반영
+  // 선택된 캐릭터 성격을 대화에 반영 — 3D 헤드는 캐릭터 매니페스트가 없어 고정 성격
+  getPersona: () => is3D()
+    ? "너는 3D로 정교하게 빚어진 차분하고 지적인 아바타 mark 야. 또렷하고 침착하게 말한다."
+    : manifest.persona,
   audioEl: audio,   // 연속 대화: 응답 재생이 끝나야 재청취
 });
 
@@ -334,9 +444,11 @@ $("form").onsubmit = async e => {
 };
 
 warp.init();   // WebGL 워프 초기화 (실패 시 조용히 폴백). loadCharacter와 경쟁은 양방향 처리됨.
-initCharacters();
+// 딥링크: ?char=<캐릭터 id|__mark3d__> — /3d 리다이렉트가 이 파라미터로 3D 모드에 바로 진입한다
+initCharacters(new URLSearchParams(location.search).get("char"));
 fetch("/api/health").then(r => r.json()).then(h => {
   if (!h.a2f) document.querySelector('#engine option[value="a2f"]')?.remove();
+  // JoyVASA 없으면 "/" 가 이 페이지를 서빙하므로 영상 모드 링크(h1 의 유일한 링크)를 지운다
   if (!h.joyvasa_ready) document.querySelector("h1 a")?.remove();
   if (!h.chat) {   // 대화 백엔드 없으면 대화 UI 숨김
     $("chatRow").style.display = "none";

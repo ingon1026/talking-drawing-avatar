@@ -15,7 +15,7 @@ from pathlib import Path
 
 import edge_tts
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -424,7 +424,8 @@ def puppet():
 
 @app.get("/3d")
 def studio3d():
-    return FileResponse(ROOT / "static" / "studio3d.html")
+    # 3D 스튜디오는 /puppet 으로 흡수됐다 — 기존 링크·북마크가 죽지 않게 딥링크로 넘긴다
+    return RedirectResponse("/puppet?char=__mark3d__")
 
 
 app.mount("/media", StaticFiles(directory=OUT), name="media")
