@@ -195,10 +195,17 @@ def _classify_schema(n: int) -> dict:
             "items": {
                 "type": "object",
                 "properties": {
+                    # index 는 모델이 '몇 번 문장을 판정 중인지' 를 매 항목에서 다시 쓰게 만든다.
+                    # 이게 없으면 강한 라벨(특히 angry)이 문장 위치와 무관하게 첫 슬롯으로
+                    # 끌려나온다 — 실측: "회의는 3시에 시작합니다. / 늦게 온 사람이 …화가
+                    # 나요." 가 3회 연속 [angry, neutral] 로 뒤집혔고, 각 문장을 단독으로
+                    # 물으면 둘 다 정확했다(= 이해가 아니라 위치 매핑 실패). index 추가 후
+                    # 같은 5케이스 3/5 -> 5/5.
+                    "index": {"type": "integer"},
                     "emotion": {"type": "string", "enum": list(EMOTIONS)},
                     "intensity": {"type": "string", "enum": list(INTENSITY)},
                 },
-                "required": ["emotion", "intensity"],
+                "required": ["index", "emotion", "intensity"],
             },
         }},
         "required": ["emotions"],
@@ -209,6 +216,7 @@ CLASSIFY_SYSTEM = (
     f"- 감정은 {', '.join(EMOTIONS)} 중 하나다. 뚜렷하지 않으면 neutral 을 쓴다.\n"
     "- intensity 는 low, mid, high 중 하나다.\n"
     "- 입력 문장 수와 정확히 같은 개수를, 입력 순서대로 출력한다.\n"
+    "- 각 항목의 index 는 판정 중인 입력 문장의 번호(1부터)를 그대로 쓴다.\n"
     "- 문장을 다시 쓰거나 설명하지 않는다. 감정만 판단한다.\n"
     # 이전 버전은 여기서 벤치(tools/emotion_bench.py) 원본 10문장의 표현을 그대로
     # 따옴표로 인용했다 — 벤치를 8/10 통과시켰지만, 인용구를 빼면 6/10 으로 떨어지고
@@ -256,6 +264,13 @@ def classify(sentences: list[str]) -> list[dict]:
         raise RuntimeError("감정 분류 응답을 읽지 못했어요.")
     if len(arr) != len(sentences):
         raise RuntimeError("감정 분류 결과 개수가 문장 수와 다릅니다.")
+
+    # index 가 1..n 을 빠짐없이 담고 있으면 그 순서로 재정렬한다 — 스키마가 index 를
+    # 요구해도 배열 순서까지 강제하지는 못하므로, 값이 온전할 때만 신뢰해 위치를 복원한다.
+    if all(isinstance(e, dict) for e in arr):
+        idx = [e.get("index") for e in arr]
+        if sorted(i for i in idx if isinstance(i, int)) == list(range(1, len(arr) + 1)):
+            arr = [e for _, e in sorted(zip(idx, arr), key=lambda t: t[0])]
 
     out = []
     for e in arr:
