@@ -1,6 +1,8 @@
+diff --git a/src/live_portrait_wmg_pipeline.py b/src/live_portrait_wmg_pipeline.py
+index bc6460c..73ddaa7 100644
 --- a/src/live_portrait_wmg_pipeline.py
 +++ b/src/live_portrait_wmg_pipeline.py
-@@ -123,6 +123,16 @@
+@@ -123,6 +123,16 @@ class LivePortraitPipeline(object):
              elif inf_cfg.animation_region == "lip":
                  for lip_idx in [6, 12, 14, 17, 19, 20]:
                      delta_new[:, lip_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp']))[:, lip_idx, :]
@@ -17,3 +19,16 @@
              # scale
              scale_new = x_s_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
  
+@@ -159,6 +169,12 @@ class LivePortraitPipeline(object):
+                     x_d_i_new += eye_delta_before_animation
+             else:
+                 eyes_delta, lip_delta = None, None
++                # blink injection: args.eye_ratio_schedule[i] = target eyes-open ratio (None = no injection)
++                eye_ratio_schedule = getattr(args, 'eye_ratio_schedule', None)
++                if eye_ratio_schedule is not None and i < len(eye_ratio_schedule) \
++                        and eye_ratio_schedule[i] is not None and source_lmk is not None:
++                    combined_eye_ratio_tensor = self.live_portrait_wrapper.calc_combined_eye_ratio([[eye_ratio_schedule[i]]], source_lmk)
++                    eyes_delta = self.live_portrait_wrapper.retarget_eye(x_s, combined_eye_ratio_tensor)
+                 if inf_cfg.flag_relative_motion:  # use x_s
+                     x_d_i_new = x_s + \
+                         (eyes_delta if eyes_delta is not None else 0) + \

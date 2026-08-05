@@ -1,9 +1,10 @@
-"""JoyVASA 인프로세스 추론 래퍼 + 눈깜빡임 스케줄 주입.
+"""JoyVASA 인프로세스 추론 래퍼 + 깜빡임·표정 스케줄 주입.
 
 모델은 첫 generate() 호출 시 1회 로드되어 GPU에 상주한다 (재로드 없음).
 깜빡임은 JoyVASA 렌더 루프의 eye retargeting 분기에 프레임별 target
 eyes-open ratio 스케줄을 주입해 구현 (JoyVASA/src/live_portrait_wmg_pipeline.py 참조).
 """
+import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ JOYVASA = ROOT / "JoyVASA"
 sys.path.insert(0, str(JOYVASA))
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+FPS = 25  # JoyVASA inference_config output_fps 기본값
 
 # 감정 → LivePortrait 표정 벡터(exp 21×3) 델타.
 # 인덱스 의미가 문서화돼 있지 않아 tools/exp_index_probe.py 로 실측했다:
@@ -41,7 +43,6 @@ def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
     d = np.zeros((21, 3), dtype="float32")
     d[BROW_IDX, BROW_AXIS] = v
     return d
-FPS = 25  # JoyVASA inference_config output_fps 기본값
 
 
 SAMPLE_FALLBACK = JOYVASA / "assets" / "examples" / "imgs" / "joyvasa_003.png"
@@ -104,6 +105,17 @@ class AvatarPipeline:
         from src.config.inference_config import InferenceConfig
         from src.config.crop_config import CropConfig
         from src.live_portrait_wmg_pipeline import LivePortraitPipeline
+
+        # 패치 미적용을 여기서 잡는다. ArgumentConfig 는 frozen 이 아니라 없는 속성을
+        # 대입해도 예외가 안 나고, 렌더 분기가 항등식이라 립싱크는 그대로 나온다 —
+        # 표정과 깜빡임만 조용히 죽고 영상은 정상으로 보인다. 그 상태로 인덱스를 측정하면
+        # "어떤 인덱스도 효과 없음" 이라는 거짓 결론까지 나온다.
+        _src = inspect.getsource(LivePortraitPipeline.execute)
+        _missing = [m for m in ("exp_delta_schedule", "eye_ratio_schedule") if m not in _src]
+        if _missing:
+            raise RuntimeError(
+                f"JoyVASA 패치가 적용돼 있지 않습니다 (누락: {', '.join(_missing)}). "
+                "patches/README.md 참조 — cd JoyVASA && git apply ../patches/joyvasa_inject.patch")
 
         base = ArgumentConfig(animation_mode=self.animation_mode,
                               flag_do_crop=self.do_crop, cfg_scale=self.cfg_scale,
