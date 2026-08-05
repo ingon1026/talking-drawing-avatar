@@ -37,12 +37,16 @@
     background: #21212b; color: inherit; border: 1px solid #2f2f3c; cursor: pointer;
   }
   #saveVid { display: inline-block; line-height: 36px; text-decoration: none; margin-top: 10px; }
+  /* display 를 준 순간 UA 의 [hidden]{display:none} 을 이겨버린다 — 명시적으로 되돌린다 */
+  #saveVid[hidden] { display: none; }
   button.primary { background: #5b8cff; border-color: #5b8cff; color: #fff; }
   button:disabled { background: #26262f; color: #666; cursor: default; }
   .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
   /* 토글 줄 — 체크박스는 설정이라 본문보다 한 톤 낮춘다 */
   .toggles { gap: 16px; margin-top: 12px; font-size: .85rem; color: #9a9ab0; }
   .toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  /* 비활성 라디오는 button:disabled 와 같은 톤으로 죽인다 (원본 없는 캐릭터는 영상 불가) */
+  .toggles label:has(:disabled) { color: #666; cursor: default; }
   #emotions button { padding: 0 12px; }
   #status { margin-top: 12px; color: #9a9ab0; font-size: .9rem; min-height: 1.2em; }
   #status.error { color: #ff7a7a; }
@@ -105,6 +109,13 @@
     <input type="file" id="charFile" accept="image/*" style="display:none">
   </div>
 
+  <!-- checked 는 마크업에 안 넣는다 — 초기 상태의 단일 출처는 applyMode() 다 -->
+  <div class="row toggles" id="outMode">
+    출력
+    <label><input type="radio" name="out" id="modeLive"> 실시간 — 즉시, 입 안 벌어짐</label>
+    <label><input type="radio" name="out" id="modeVideo"> 영상 — 2초, 입 벌어짐</label>
+  </div>
+
   <div class="row toggles">
     <label><input type="checkbox" id="chatMode"> 대화 모드</label>
     <label><input type="checkbox" id="autoEmo" checked> 감정 자동</label>
@@ -156,7 +167,13 @@ const MARK3D = "__mark3d__";
 const is3D = () => $("character").value === MARK3D;
 
 let charList = [];
-const hasVideo = () => !is3D() && !!(charList.find(c => c.id === $("character").value) || {}).video;
+// canVideo = 영상 경로를 쓸 수 있는가(엔진 있고 + 이 캐릭터에 원본 source.png 가 있고 + 3D 아님).
+// wantVideo = 사용자가 원하는가. 둘을 나눠 둬야 원본 없는 캐릭터를 잠깐 거쳐도 의사가 안 지워진다
+// (u_x → 돼지 → u_y 로 돌아오면 영상이 다시 선택된다).
+let wantVideo = true, joyvasaReady = true;   // health 응답 전엔 낙관 — 기존 동작과 같다
+const canVideo = () =>
+  joyvasaReady && !is3D() && !!(charList.find(c => c.id === $("character").value) || {}).video;
+const hasVideo = () => canVideo() && wantVideo;
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
   charList = list;
@@ -181,9 +198,25 @@ async function applyMode() {
   // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 3D 에선 숨긴다
   $("addChar").style.display = on3d ? "none" : "";
   updateDelBtn();
+  // 출력 라디오는 표시를 겸한다 — 못 쓰는 조합이면 영상 쪽을 잠그고 실시간으로 내린다.
+  // disabled 만 걸고 checked 를 안 옮기면 "잠긴 채 선택된" 상태가 남으므로 두 줄 다 필요하다.
+  // 아래 await 보다 **앞**이어야 한다: 석고상 첫 선택 시 41MB 받는 동안 라디오가
+  // 이전 캐릭터 상태로 남는다.
+  const useVid = canVideo() && wantVideo;
+  $("modeVideo").disabled = !canVideo();
+  $("modeVideo").checked = useVid;
+  $("modeLive").checked = !useVid;
+  // 엔진 셀렉트는 실시간 경로에서만 읽힌다 — 영상일 땐 "~0.5초" 라벨이 거짓말이라 감춘다.
+  // disabled 가 아니라 hidden 인 이유가 그것이다(회색이어도 텍스트는 읽힌다).
+  $("engine").style.display = useVid ? "none" : "";
   if (on3d) await ensure3D().catch(e => setStatus("3D 로드 실패: " + e.message, true));
   else await loadCharacter($("character").value);
 }
+
+// applyMode 안의 .checked 대입은 프로그래밍적이라 change 를 발사하지 않는다 — 그래서 여기서
+// wantVideo 가 되덮이지 않는다. 나중에 dispatchEvent(new Event("change")) 를 넣으면
+// applyMode → change → wantVideo=현재값 이 되어 사용자 의사가 조용히 지워진다.
+$("outMode").onchange = () => { wantVideo = $("modeVideo").checked; applyMode(); };
 
 function updateDelBtn() {
   const c = charList.find(c => c.id === $("character").value);
@@ -447,7 +480,8 @@ async function speakVideo(text, emotion) {
       const a = $("saveVid"), name = $("character").selectedOptions[0].text;
       a.href = j.video_url;
       a.download = `${name}_${text.slice(0, 12)}.mp4`.replace(/[\\/:*?"<>|]/g, "_");
-      a.hidden = false;
+      // 재생 중 실시간으로 내렸거나 캐릭터를 바꿨으면 영상은 이미 접혔다 — 링크만 되살아나면 안 된다.
+      if ($("vid").src.includes(job_id)) a.hidden = false;
       return;
     }
     if (j.status === "error") throw new Error(j.error || "영상 생성 실패");
@@ -499,11 +533,18 @@ $("form").onsubmit = async e => {
 
 warp.init();   // WebGL 워프 초기화 (실패 시 조용히 폴백). loadCharacter와 경쟁은 양방향 처리됨.
 // 딥링크: ?char=<캐릭터 id|__mark3d__> — /3d 리다이렉트가 이 파라미터로 3D 모드에 바로 진입한다
-initCharacters(new URLSearchParams(location.search).get("char"));
+const charsReady = initCharacters(new URLSearchParams(location.search).get("char"));
 fetch("/api/health").then(r => r.json()).then(h => {
   if (!h.a2f) document.querySelector('#engine option[value="a2f"]')?.remove();
-  // JoyVASA 없으면 "/" 가 이 페이지를 서빙하므로 영상 모드 링크(h1 의 유일한 링크)를 지운다
-  if (!h.joyvasa_ready) document.querySelector("h1 a")?.remove();
+  joyvasaReady = !!h.joyvasa_ready;
+  // JoyVASA 없으면 "/" 가 이 페이지를 서빙하므로 영상 모드 링크(h1 의 유일한 링크)를 지운다.
+  // 그 배포에도 source.png 는 있어서(빌더가 엔진과 무관하게 저장) 라디오를 안 잠그면
+  // 영상이 선택된 채 뜨고 /api/speak 이 실패한다. charList 가 찬 뒤에 부른다 —
+  // 빈 id 로 loadCharacter 가 도는 경쟁을 피한다.
+  if (!h.joyvasa_ready) {
+    document.querySelector("h1 a")?.remove();
+    charsReady.then(applyMode);
+  }
   if (!h.chat) {   // 대화 백엔드 없으면 대화 UI 숨김
     $("chatMode").closest("label").style.display = "none";
     $("micBtn").style.display = "none";

@@ -36,6 +36,8 @@
     display: inline-block; margin-top: 12px; padding: 10px 18px; border-radius: 10px;
     background: #2a2a35; color: inherit; font-size: .9rem; text-decoration: none;
   }
+  /* display 를 준 순간 UA 의 [hidden]{display:none} 을 이겨버린다 — 명시적으로 되돌린다 */
+  #saveVid[hidden] { display: none; }
   .controls { margin-top: 16px; display: grid; gap: 12px; font-size: .9rem; }
   .controls label { display: flex; align-items: center; gap: 10px; }
   .controls select, .controls input[type=range] { flex: 1; }
