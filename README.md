@@ -103,6 +103,10 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 └─ tools/                  # 캐릭터 생성 스크립트
 ```
 
+캐릭터가 영상(JoyVASA) 경로를 타는지 스프라이트 실시간 경로만 쓰는지는 manifest 의 `video` 불리언으로
+갈린다 — 등록 시점에 LivePortrait 의 얼굴 검출로 정한다. 그 키가 없던 시절의 캐릭터는
+`PYTHONPATH= .venv/bin/python tools/rejudge_video.py` 로 소급 판정한다(기본 dry-run, 쓰려면 `--apply`).
+
 ## ⚖️ 라이선스 유의사항
 
 | 구성요소 | 라이선스 |

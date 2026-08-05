@@ -220,11 +220,23 @@ $("tempPhotoFile").onchange = e => {
   e.target.value = "";   // 같은 파일을 다시 고를 수 있게
   if (!file) return;
   const r = new FileReader();
-  r.onload = () => {
+  r.onload = async () => {
     tempPhoto = r.result;
     $("photoPrev").src = tempPhoto;
     $("character").value = prevChar = PHOTO;
     applyMode();
+    // 임시 사진은 스프라이트 대안이 없어서 막지 않고 경고만 한다 — 얼굴 검출이 안 되는
+    // 그림도 영상은 나오지만, 얼굴을 못 찾아 그림 전체가 늘어난다. 미리 알려준다.
+    setStatus("사진 확인 중…");
+    try {
+      const { video } = await fetch("/api/can-animate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_b64: tempPhoto }),
+      }).then(x => x.json());
+      setStatus(video
+        ? "사진 준비됐어요. 문장을 입력하고 말하기를 누르세요."
+        : "⚠️ 얼굴을 못 찾았습니다 — 만들어도 그림이 늘어질 수 있어요. 얼굴이 크게 나온 사진이면 잘 됩니다.", !video);
+    } catch { setStatus(""); }   // 판정 실패는 조용히 넘어간다 — 생성 자체는 막지 않는다
   };
   r.readAsDataURL(file);
 };
@@ -315,10 +327,14 @@ const annotator = AvatarCore.makeAnnotator({
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-      const { id } = await res.json();
+      const { id, video } = await res.json();
       done();
       await initCharacters(id);
-      setStatus("✅ 캐릭터가 추가됐어요. 문장을 입력해보세요!");
+      // 서버가 등록 시점에 얼굴 검출을 돌려 영상 가능 여부를 판정한다. 실패면 조용히
+      // 스프라이트 전용이 되는데, 왜 영상이 잠겼는지 말해주지 않으면 고장으로 보인다.
+      setStatus(video === false
+        ? "✅ 추가됐어요. 이 그림은 얼굴 검출이 안 돼 실시간 전용입니다 — 영상은 실사 사진이나 얼굴이 큰 그림에서 됩니다."
+        : "✅ 캐릭터가 추가됐어요. 문장을 입력해보세요!");
     } catch (err) { setStatus(err.message, true); }
   },
 });

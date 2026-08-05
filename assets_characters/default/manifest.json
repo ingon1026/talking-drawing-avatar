@@ -20,5 +20,6 @@
     "tongue": "#e08a8a",
     "teeth": "#ffffff",
     "width": 30
-  }
+  },
+  "video": false
 }

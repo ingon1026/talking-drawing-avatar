@@ -8,6 +8,7 @@ eyes-open ratio 스케줄을 주입해 구현 (JoyVASA/src/live_portrait_wmg_pip
 import inspect
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import trt_warp
@@ -96,6 +97,54 @@ def make_blink_schedule(n_frames: int, interval_s: float, strength: float):
 
 def _partial_fields(cls, kwargs):
     return cls(**{k: v for k, v in kwargs.items() if hasattr(cls, k)})
+
+
+# can_animate 용 InsightFace 로더. 단독 로드 1.11s, 판정은 46~88ms 라 캐시가 필요하다.
+# AvatarPipeline._load() 가 여기에 자기 cropper 를 대입한다(아래 이유 참조).
+_cropper = None
+_cropper_lock = threading.Lock()
+
+
+def can_animate(image: Path) -> bool:
+    """이 그림이 영상 경로를 탈 수 있는가 = LivePortrait 의 얼굴 검출이 되는가.
+
+    LivePortrait 는 실사 포트레이트로 학습돼서 손그림 전신 낙서는 얼굴을 못 찾고
+    그림 전체를 얼굴로 잡아 통째로 늘렸다 줄인다. 실측상 머리만 잘라 줘도 검출이
+    안 되니 자동 크롭으로는 못 구제한다 — 등록 시점에 걸러 스프라이트 전용으로 돌린다.
+
+    InsightFace 는 CPU 로 돈다(이 환경의 onnxruntime CUDA provider 가 libcublasLt.so.11
+    을 못 찾는다) — GPU 락 없이 불러도 된다.
+    """
+    # JoyVASA 임포트는 반드시 함수 안에서. 모듈 최상위로 올리면 app 을 import 하는
+    # 것만으로 onnxruntime·insightface 가 딸려 와 테스트가 통째로 무거워진다.
+    from src.config.argument_config import ArgumentConfig
+    from src.config.crop_config import CropConfig
+    from src.utils.cropper import Cropper
+    from src.utils.io import load_image_rgb
+
+    img = Path(image)
+    if not img.exists():
+        return False
+    try:
+        # 로더 생성과 판정을 같이 잠근다 — 등록·미리보기 엔드포인트가 동기 def 라
+        # FastAPI 스레드풀에서 동시에 들어오면 Cropper 를 두 번 올린다.
+        # 한계: _cropper 가 _pipe.cropper 일 때 렌더 경로(execute)가 같은 객체를
+        # 이 락 밖에서 쓴다 — JoyVASA 를 안 건드리고는 거기까지 못 묶는다.
+        with _cropper_lock:
+            global _cropper
+            if _cropper is None:
+                # crop_cfg 를 _load() 와 똑같이 만든다(ArgumentConfig 를 거친다). 그냥
+                # CropConfig() 를 쓰면 det_thresh 가 0.1 인데 pipe 의 것은 0.15 라 —
+                # 판정이 "그 프로세스에서 영상 잡을 돌린 적 있느냐"에 따라 달라진다.
+                # 증상: 미리보기는 가능이라 했는데 등록하니 video:false (또는 그 반대).
+                _cropper = Cropper(crop_cfg=_partial_fields(CropConfig, ArgumentConfig().__dict__))
+            return _cropper.crop_source_image(load_image_rgb(str(img)), _cropper.crop_cfg) is not None
+    except Exception as e:
+        # 검출 실패와 같게 False 지만 조용히 넘기지는 않는다 — 가중치 경로가 어긋나거나
+        # onnxruntime 이 깨지면 전부 False 가 되고, 증상은 "영상 되는 캐릭터가 하나도
+        # 안 생김" 뿐이라 아무도 원인을 못 찾는다.
+        print(f"[can_animate] 판정 실패 → 영상 불가로 처리 ({type(e).__name__}: {e}): {img}")
+        return False
 
 
 class _StreamEncoder:
@@ -229,6 +278,14 @@ class AvatarPipeline:
             # 조용히 느려지지 않게 남긴다 — 엔진 경로가 어긋나면 증상이 "왜 느리지" 뿐이다.
             print(f"[pipeline] TRT 엔진 없음 → torch 경로 (1.4배 느림): {trt_warp.ENGINE}")
         self._ArgumentConfig = ArgumentConfig
+        # can_animate 가 이 pipe 의 cropper 를 쓰게 한다 — InsightFace 두 벌은 메모리 낭비다.
+        # 재사용이 한쪽 방향뿐인 이유: LivePortraitPipeline.__init__ 이 Cropper 를 무조건
+        # 자기가 만들어서(live_portrait_wmg_pipeline.py:35) 우리 것을 주입할 수가 없다.
+        # 그래서 pipe 가 뜬 뒤 전역을 그쪽으로 갈아끼운다 — can_animate 가 먼저 올려둔
+        # 단독 Cropper 는 참조가 끊겨 회수된다.
+        global _cropper
+        with _cropper_lock:
+            _cropper = self._pipe.cropper
         return self._pipe
 
     def generate(self, wav: Path, out_mp4: Path,
@@ -315,3 +372,9 @@ if __name__ == "__main__":
     half = make_blink_schedule(100, 2.0, 0.5)
     assert abs(half[51] - 0.15) < 1e-9                   # 강도 0.5 = 반감김
     print("blink schedule self-check OK")
+
+    # 얼굴 검출 판정 (GPU 불필요 — InsightFace 는 CPU 로 돈다)
+    assert can_animate(JOYVASA / "assets/examples/imgs/joyvasa_005.png")  # 실사 → 영상 가능
+    assert not can_animate(ROOT / "test_1.png")                           # 돼지 낙서 → 불가
+    assert not can_animate(ROOT / "없는파일.png")                          # 파일 없으면 불가
+    print("can_animate self-check OK")

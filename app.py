@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from pipeline import AvatarPipeline
+from pipeline import AvatarPipeline, can_animate
 
 ROOT = Path(__file__).parent
 OUT = ROOT / "output"
@@ -208,6 +208,22 @@ def sentence_starts(sentences: list[str], marks: list[dict]) -> list[float]:
     return starts
 
 
+def _char_video_ok(d: Path) -> bool:
+    """캐릭터 폴더가 영상(JoyVASA) 경로를 탈 수 있는가. 목록과 /api/speak 가 같이 쓴다 —
+    두 곳이 다른 규칙을 쓰면 클라이언트는 라디오를 열어 주고 서버는 막는 상태가 된다.
+
+    manifest 의 "video" 가 정답이다(등록 때 can_animate 로 판정해 적는다). 키가 없으면
+    예전 캐릭터라 source.png 존재 여부로 폴백한다 — 마이그레이션은 별도 담당.
+    """
+    try:
+        mf = json.loads((d / "manifest.json").read_text())
+    except Exception:
+        return (d / "source.png").exists()
+    # .get("video", 폴백) 이 아니라 키 유무로 본다 — 판정 결과가 false 인 캐릭터를
+    # "키 없음" 과 뭉개면 source.png 가 있다는 이유로 폴백이 되살려 버린다.
+    return bool(mf["video"]) if "video" in mf else (d / "source.png").exists()
+
+
 def run_video_job(job_id: str, job: dict):
     """Phase A: 텍스트(+선택 업로드 사진) → 립싱크 mp4."""
     req = job["req"]
@@ -375,6 +391,16 @@ def speak(req: SpeakReq):
     # 4초 기다린 끝에 알게 되므로 여기서 즉시 막는다.
     if not req.char_id and not req.image_b64:
         raise HTTPException(400, "애니메이션할 사진이나 캐릭터를 먼저 지정해주세요.")
+    # 얼굴 검출이 안 되는 그림(손그림 낙서 등)은 영상을 만들면 그림 전체가 얼굴로 잡혀
+    # 통째로 늘었다 줄었다 한다. 클라이언트가 라디오를 잠그지만 API 를 직접 치면 뚫린다.
+    # 워커가 아니라 여기서 막는 이유는 위 가드와 같다 — 잡을 만들면 사용자는 몇 초
+    # 기다린 끝에 "error" 만 보게 된다. 없는 char_id 는 건드리지 않는다(예전부터
+    # image_b64 폴백으로 넘어간다 — 그건 이 변경의 범위가 아니다).
+    if req.char_id:
+        d = ROOT / "assets_characters" / req.char_id
+        if d.exists() and not _char_video_ok(d):
+            raise HTTPException(400, "이 캐릭터는 얼굴 검출이 안 돼 영상을 만들 수 없습니다. "
+                                     "실시간 모드로 말하게 해주세요.")
     job_id = uuid.uuid4().hex[:12]
     jobs[job_id] = {"status": "queued", "req": req}
     work_q.put(job_id)
@@ -488,8 +514,42 @@ def create_character(req: CharacterCreateReq):
         deletable=True)
     # 원본을 캐릭터 자산으로 보관 — JoyVASA(영상 생성)는 눈·입이 지워진 base 가 아니라
     # 손대지 않은 그림이 있어야 한다. 캐릭터를 지울 때 같이 지워지도록 폴더 안에 둔다.
-    shutil.copyfile(src, ROOT / "assets_characters" / char_id / "source.png")
-    return {"id": char_id}
+    cdir = ROOT / "assets_characters" / char_id
+    shutil.copyfile(src, cdir / "source.png")
+    # 영상 가능 여부를 manifest 에 박는다. source.png 존재 여부로 판단하면 "영상 불가"를
+    # 표현하려고 사용자 원본을 지워야 하는데 복구가 안 된다 — 원본은 무조건 남기고
+    # 판정은 명시적으로 적는다. build_character 가 쓴 뒤라 읽어서 키만 더한다.
+    video = can_animate(cdir / "source.png")
+    mf = json.loads((cdir / "manifest.json").read_text())
+    mf["video"] = video
+    (cdir / "manifest.json").write_text(json.dumps(mf, ensure_ascii=False, indent=2))
+    return {"id": char_id, "video": video}
+
+
+class CanAnimateReq(BaseModel):
+    image_b64: str            # dataURL 또는 base64
+
+
+@app.post("/api/can-animate")
+def can_animate_api(req: CanAnimateReq):
+    """등록하지 않는 임시 사진도 미리 판정해 준다 — 영상 라디오를 눌러 놓고 깨진 결과를
+    받는 대신, 고르는 자리에서 알려주려는 것."""
+    if not req.image_b64.strip():
+        raise HTTPException(400, "이미지가 비어 있습니다.")
+    updir = ROOT / "uploads"
+    updir.mkdir(exist_ok=True)
+    tmp = updir / f"probe_{uuid.uuid4().hex[:12]}.png"
+    try:
+        # 디코딩 실패는 400 — create_character 와 같게 맞춘다. 여기서 video:false 로
+        # 뭉개면 클라이언트가 "얼굴 검출 실패"라고 안내해 원인을 오보한다.
+        tmp.write_bytes(base64.b64decode(req.image_b64.split(",")[-1]))
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, "이미지 디코딩 실패")
+    try:
+        return {"video": can_animate(tmp)}
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 @app.delete("/api/characters/{char_id}")
@@ -523,9 +583,9 @@ def characters():
                     mf = {}
                 out.append({"id": d.name, "name": mf.get("name", d.name),
                             "deletable": bool(mf.get("deletable", False)),
-                            # 원본이 있으면 JoyVASA(생성) 경로를 쓸 수 있다 — 스프라이트
-                            # 워프로는 입이 실제로 벌어지지 않는다(구강 픽셀이 원본에 없다).
-                            "video": (d / "source.png").exists()})
+                            # 영상 경로를 쓸 수 있는지 — 스프라이트 워프로는 입이 실제로
+                            # 벌어지지 않는다(구강 픽셀이 원본에 없다).
+                            "video": _char_video_ok(d)})
     return out
 
 
