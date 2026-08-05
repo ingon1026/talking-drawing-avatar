@@ -68,14 +68,20 @@ def main():
     base = np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, None)), dtype=np.int16)
     idxs = a.idx if a.idx else list(range(21))
     print(f"축={a.axis} 진폭={a.amp}  (입술 인덱스 {LIP_IDX} 는 소스에 명시됨)")
-    print(f"{'idx':>4} {'눈썹':>7} {'눈':>7} {'입':>7}   판정")
+    print(f"{'idx':>4} {'눈썹':>7} {'눈':>7} {'입':>7}  {'국소':>5}  판정")
     for i in idxs:
         d = np.zeros((21, 3), dtype=np.float32)
         d[i, a.axis] = a.amp
         cur = np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, d)), dtype=np.int16)
         b = bands(np.abs(cur - base))
-        tag = ["눈썹", "눈", "입"][int(np.argmax(b))] if max(b) > 40 else "-"
-        print(f"{i:>4} {b[0]:>9} {b[1]:>8} {b[2]:>8}   {tag}")
+        # 국소성 판정 — 어느 대역이 "가장 큰가"가 아니라 "그 대역만 변했는가".
+        # 인덱스 3·4 는 얼굴 전체를 상하로 옮겨서 세 대역이 다 커진다. 그건 눈썹이 아니다.
+        tot = sum(b) or 1
+        share = [x / tot for x in b]
+        loc = max(share)
+        tag = "-" if max(b) < 40 else (
+            f"{['눈썹', '눈', '입'][int(np.argmax(b))]}" if loc >= 0.55 else "전역(머리)")
+        print(f"{i:>4} {b[0]:>7} {b[1]:>7} {b[2]:>7}   {loc:.2f}  {tag}")
 
 
 def _gen(pipe, img, wav, out_dir, delta):

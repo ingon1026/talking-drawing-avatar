@@ -13,6 +13,34 @@ JOYVASA = ROOT / "JoyVASA"
 sys.path.insert(0, str(JOYVASA))
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# 감정 → LivePortrait 표정 벡터(exp 21×3) 델타.
+# 인덱스 의미가 문서화돼 있지 않아 tools/exp_index_probe.py 로 실측했다:
+#   2 y축 = 눈썹 (양수 올림, 국소도 0.60 — 얼굴도 약간 따라 움직인다)
+#   6·12·14·19·20 = 입술 (소스에 명시, 립싱크가 이미 쓰므로 건드리지 않는다)
+#   3·4·11·15 = 얼굴 전체 상하 이동 — 눈썹처럼 보이지만 전역이라 쓰면 안 된다
+# ±0.08 은 과하고 ±0.04 가 화면에서 읽히는 크기다.
+BROW_IDX, BROW_AXIS = 2, 1
+EMOTION_BROW = {           # EMOTIONS 프리셋(avatar_core.js)의 brow 채널과 부호를 맞춘다
+    "joy": 0.010,          # browinnerup 없음 — 거의 중립
+    "sad": 0.040,          # browinnerup 0.7
+    "angry": -0.045,       # browdown 0.85
+    "surprise": 0.045,     # browouterup 0.75 + innerup 0.6
+    "fear": 0.040,         # browinnerup 0.85
+    "shy": 0.005,
+    "neutral": 0.0,
+}
+
+
+def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
+    """감정 라벨 → (21,3) 표정 델타. 없거나 중립이면 None(주입 안 함)."""
+    v = EMOTION_BROW.get(emo or "neutral", 0.0) * max(0.0, min(1.0, intensity))
+    if abs(v) < 1e-4:
+        return None
+    import numpy as np
+    d = np.zeros((21, 3), dtype="float32")
+    d[BROW_IDX, BROW_AXIS] = v
+    return d
 FPS = 25  # JoyVASA inference_config output_fps 기본값
 
 

@@ -58,6 +58,8 @@ class SpeakReq(BaseModel):
     rate: float = 0.0
     pitch: float = 0.0
     volume: float = 0.0
+    emotion: str | None = None      # 표정(눈썹)용 감정 라벨
+    intensity: float = 1.0
 
 
 class SpeakRtReq(BaseModel):
@@ -68,6 +70,8 @@ class SpeakRtReq(BaseModel):
     rate: float = 0.0
     pitch: float = 0.0
     volume: float = 0.0
+    emotion: str | None = None      # 표정(눈썹)용 감정 라벨
+    intensity: float = 1.0
 
 
 MULTI_VOICE = "ko-KR-HyunsuMultilingualNeural"  # 영어/한영혼합용 — 한국어전용 음성은 영어를 뭉갬
@@ -158,8 +162,10 @@ def run_video_job(job_id: str, job: dict):
     job["status"] = "animating"
     mp4 = OUT / f"{job_id}.mp4"
     try:
+        from pipeline import emotion_exp_delta
         pipeline.generate(wav, mp4, blink_interval=req.blink_interval,
-                          blink_strength=req.blink_strength, image=img_path, do_crop=do_crop)
+                          blink_strength=req.blink_strength, image=img_path, do_crop=do_crop,
+                          exp_delta=emotion_exp_delta(req.emotion, req.intensity))
     finally:
         # 업로드 임시본만 정리한다 — 캐릭터 source.png 는 영구 자산이라 건드리지 않는다.
         if img_path and img_path.exists() and img_path.parent.name == "uploads":
