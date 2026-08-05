@@ -53,6 +53,11 @@ class SpeakReq(BaseModel):
     blink_strength: float = 1.0  # 0~1
     image_b64: str | None = None  # 업로드 사진(dataURL/base64). 없으면 폴더 기본 이미지
     char_id: str | None = None    # 등록 캐릭터 id — 그 캐릭터의 source.png 로 영상 생성
+    # 감정 → 목소리 톤 (비율, 0 = 평상시). 클라이언트의 AvatarCore.voiceProsody 산출값.
+    # 톤이 바뀐 오디오를 JoyVASA 가 먹으므로 표정·머리 움직임도 그만큼 따라온다.
+    rate: float = 0.0
+    pitch: float = 0.0
+    volume: float = 0.0
 
 
 class SpeakRtReq(BaseModel):
@@ -134,7 +139,8 @@ def run_video_job(job_id: str, job: dict):
     req = job["req"]
     job["status"] = "tts"
     wav = OUT / f"{job_id}.wav"
-    tts_to_wav(req.text, req.voice, wav)
+    tts_to_wav(req.text, req.voice, wav,
+               prosody={"rate": req.rate, "pitch": req.pitch, "volume": req.volume})
 
     # 등록 캐릭터면 그 원본으로 애니메이션. base.png(눈·입 지운 것)가 아니라 source.png 다.
     img_path, do_crop = None, None

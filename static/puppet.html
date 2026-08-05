@@ -391,11 +391,21 @@ requestAnimationFrame(render);
 // 스프라이트 워프로는 입이 실제로 벌어지지 않는다 — 벌어진 입의 픽셀이 그림에 없어서
 // 만들어 넣어야 하고, 만든 구강은 어떤 모양이든 원본과 겉돈다(여러 번 실측).
 // JoyVASA 는 이·혀·구강을 화풍에 맞게 생성한다. 대신 웜 4~5초가 걸린다.
-async function speakVideo(text) {
+async function speakVideo(text, emotion) {
+  // 감정을 먼저 판정해 목소리 톤에 싣는다 — TTS 요청 파라미터라 오디오를 만들기 전에
+  // 알아야 한다. 톤이 바뀐 오디오를 JoyVASA 가 먹으므로 표정·머리 움직임도 따라온다.
+  let seg = emotion ? { emo: emotion, intensity: 0.9 } : null;
+  if (!seg && $("autoEmo").checked) {
+    setStatus("감정 분석 중…");
+    try { seg = (await AvatarCore.classifyEmotion(text))[0]; } catch { /* 실패하면 평상시 톤 */ }
+  }
+  if (seg) emo.setEmotion(seg.emo, seg.intensity, !emotion);
+  const pr = seg ? AvatarCore.voiceProsody(seg.emo, seg.intensity) : {};
   setStatus("영상 만드는 중… (4~5초)");
   const r = await fetch("/api/speak", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value }),
+    body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value,
+                           rate: pr.rate || 0, pitch: pr.pitch || 0, volume: pr.volume || 0 }),
   });
   if (!r.ok) throw new Error("영상 생성 요청 실패");
   const { job_id } = await r.json();
@@ -416,7 +426,7 @@ async function speakVideo(text) {
 }
 
 const speak = (text, emotion) => hasVideo()
-  ? speakVideo(text)
+  ? speakVideo(text, emotion)
   : AvatarCore.speakWithEmotion({
       text, emotion, autoEmo: $("autoEmo").checked, emo,
       voice: $("voice").value, engine: $("engine").value,
