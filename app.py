@@ -186,6 +186,27 @@ def _apply_prosody(wav: Path, p: dict, voice: str):
     tmp.replace(wav)
 
 
+def drop_upload(image_b64: str, name: str) -> Path:
+    """dataURL/base64 → uploads/<name>.png. 디코딩 실패는 400.
+
+    세 경로(캐릭터 등록·임시 사진 판정·영상 잡)가 같은 일을 각자 적고 있었고, 그래서
+    같은 잘못된 dataURL 이 어디서 들어오느냐에 따라 400 이 되기도 잡 실패가 되기도 했다.
+    파일로 떨구는 이유는 아래 소비자들이 전부 **경로**를 받기 때문이다
+    (build_character, can_animate, pipeline.generate).
+    """
+    try:
+        raw = base64.b64decode((image_b64 or "").split(",")[-1])
+    except Exception:
+        raise HTTPException(400, "이미지 디코딩 실패")
+    if not raw:
+        raise HTTPException(400, "이미지가 비어 있습니다.")
+    updir = ROOT / "uploads"
+    updir.mkdir(exist_ok=True)
+    p = updir / f"{name}.png"
+    p.write_bytes(raw)
+    return p
+
+
 _NONWORD = re.compile(r"[^\w]", re.UNICODE)
 
 
@@ -243,7 +264,6 @@ def run_video_job(job_id: str, job: dict):
                 s = llm_source.split_sentences(req.text)
                 labs = llm_source.classify_cached(tuple(s)) if s else None
                 if labs:
-                    got["lab"] = labs[0]
                     got["sentences"], got["labs"] = s, labs
             except Exception as e:
                 # 판정 실패는 중립으로 진행한다 — 영상 자체는 나와야 한다.
@@ -257,23 +277,26 @@ def run_video_job(job_id: str, job: dict):
         th.start()
         marks = tts_to_wav(req.text, req.voice, wav)   # 중립 프로소디로 즉시 합성
         th.join()
-        lab = got.get("lab")
-        if lab:
-            emotion, intensity = lab["emo"], lab["intensity"]
+        labs = got.get("labs")
+        if labs:
+            emotion, intensity = labs[0]["emo"], labs[0]["intensity"]
             # 문장마다 표정을 바꾼다 — 시작 시각은 TTS 단어 마크에서 복원한다.
             # 목소리 톤은 못 나눈다(프로소디는 발화 하나에 하나) — 아래는 첫 문장 것이다.
             starts = sentence_starts(got["sentences"], marks)
             segments = [(t, g["emo"], g["intensity"])
                         for t, g in zip(starts, got["labs"])]
-            row = (req.prosody_table or {}).get(emotion) or {}
-            if not row:
+            row = (req.prosody_table or {}).get(emotion)
+            if row:
+                # 요청 음성이 아니라 **실제 합성에 쓰인** 음성으로 F0 를 잡아야 한다.
+                _apply_prosody(wav, {k: v * intensity for k, v in row.items()},
+                               _resolve_voice(req.text, req.voice))
+            else:
                 # 감정은 판정됐는데 목소리만 평평한 영상이 나온다 — 에러도 안 나서
                 # 무증상이다. 테이블은 클라이언트가 요청마다 실어 보내므로(단일 출처가
                 # avatar_core.js 의 VOICE_STYLE) 여기서 빠지면 그쪽 변경을 의심한다.
+                # 빈 row 로 _apply_prosody 를 부르면 안 된다 — 필터가 빈 문자열이라
+                # 아무 일도 안 하는데, 인자가 먼저 평가돼 _base_f0 의 pyin(162ms)이 헛돈다.
                 print(f"[video] prosody_table 에 '{emotion}' 없음 — 목소리는 중립으로 나갑니다")
-            # 요청 음성이 아니라 **실제 합성에 쓰인** 음성으로 F0 를 잡아야 한다.
-            _apply_prosody(wav, {k: v * intensity for k, v in row.items()},
-                           _resolve_voice(req.text, req.voice))
         job["emotion"] = emotion    # 클라이언트가 표정 상태를 맞출 수 있게 알려준다
     else:
         # 감정을 이미 안다(수동 버튼 / 감정 자동 꺼짐) — 겹칠 게 없으니 SSML 이 낫다.
@@ -287,11 +310,7 @@ def run_video_job(job_id: str, job: dict):
         if cand.exists():
             img_path, do_crop = cand, True
     if img_path is None and req.image_b64:
-        updir = ROOT / "uploads"
-        updir.mkdir(exist_ok=True)
-        img_path = updir / f"{job_id}.png"
-        img_path.write_bytes(base64.b64decode(req.image_b64.split(",")[-1]))
-        do_crop = True
+        img_path, do_crop = drop_upload(req.image_b64, job_id), True
 
     job["status"] = "animating"
     mp4 = OUT / f"{job_id}.mp4"
@@ -503,18 +522,11 @@ def create_character(req: CharacterCreateReq):
 
     from character_builder import build_character
 
-    try:
-        raw = base64.b64decode(req.image_b64.split(",")[-1])
-    except Exception:
-        raise HTTPException(400, "이미지 디코딩 실패")
     char_id = "u_" + uuid.uuid4().hex[:6]
-    updir = ROOT / "uploads"
-    updir.mkdir(exist_ok=True)
-    # build_character 가 파일 경로를 받으므로 잠깐 떨군다. 끝나면 지운다 — 예전엔
-    # 남겨 둬서 캐릭터마다 원본이 source.png 와 uploads 에 두 벌씩 쌓였다(실측 85MB).
-    # finally 인 이유: 빌드가 실패해도 지워야 한다. 고아 17개가 그렇게 생긴 걸로 보인다.
-    src = updir / f"{char_id}.png"
-    src.write_bytes(raw)
+    # 끝나면 지운다 — 예전엔 남겨 둬서 캐릭터마다 원본이 source.png 와 uploads 에
+    # 두 벌씩 쌓였다(실측 85MB). finally 인 이유: 빌드가 실패해도 지워야 한다.
+    # 고아 17개가 그렇게 생긴 걸로 보인다.
+    src = drop_upload(req.image_b64, char_id)
     cdir = ROOT / "assets_characters" / char_id
     try:
         with PILImage.open(src) as im:
@@ -551,18 +563,9 @@ class CanAnimateReq(BaseModel):
 def can_animate_api(req: CanAnimateReq):
     """등록하지 않는 임시 사진도 미리 판정해 준다 — 영상 라디오를 눌러 놓고 깨진 결과를
     받는 대신, 고르는 자리에서 알려주려는 것."""
-    if not req.image_b64.strip():
-        raise HTTPException(400, "이미지가 비어 있습니다.")
-    updir = ROOT / "uploads"
-    updir.mkdir(exist_ok=True)
-    tmp = updir / f"probe_{uuid.uuid4().hex[:12]}.png"
-    try:
-        # 디코딩 실패는 400 — create_character 와 같게 맞춘다. 여기서 video:false 로
-        # 뭉개면 클라이언트가 "얼굴 검출 실패"라고 안내해 원인을 오보한다.
-        tmp.write_bytes(base64.b64decode(req.image_b64.split(",")[-1]))
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(400, "이미지 디코딩 실패")
+    # 디코딩 실패를 여기서 video:false 로 뭉개면 클라이언트가 "얼굴 검출 실패"라고
+    # 안내해 원인을 오보한다 — drop_upload 가 400 으로 가른다.
+    tmp = drop_upload(req.image_b64, f"probe_{uuid.uuid4().hex[:12]}")
     try:
         return {"video": can_animate(tmp)}
     finally:
@@ -632,15 +635,14 @@ def stream_video(job_id: str):
             time.sleep(0.05)
         with path.open("rb") as f:
             while True:
+                # status 를 read **전에** 본다. 뒤에 보면 "EOF 를 본 순간과 done 이 된
+                # 순간 사이에 쓰인 꼬리"를 놓쳐서 한 번 더 비우는 갈래가 필요해진다.
+                # 먼저 보면 done 이후엔 아무도 안 쓰므로 그 EOF 가 진짜 EOF 다.
+                finished = job["status"] in ("done", "error")
                 b = f.read(65536)
                 if b:
                     yield b
-                elif job["status"] in ("done", "error"):
-                    # 완료 직전에 EOF 를 봤을 수 있다 — 남은 꼬리를 한 번 더 비운다.
-                    while (b := f.read(65536)):
-                        yield b
-                    return
-                elif time.time() > deadline:
+                elif finished or time.time() > deadline:
                     return
                 else:
                     time.sleep(0.05)

@@ -187,7 +187,6 @@ const canVideo = () => joyvasaReady && !is3D()
 // 사진 모드는 스프라이트 파츠가 없어 실시간 렌더 자체가 불가능하다 — 영상 강제.
 // wantVideo 를 무시하는 게 핵심이다: 라디오만 잠그면 직전에 실시간을 골라둔 사용자가
 // speak() 에서 파츠 없는 실시간 경로로 빠진다.
-const canLive = () => !isPhoto();
 const hasVideo = () => isPhoto() || (canVideo() && wantVideo);
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
@@ -248,15 +247,22 @@ $("tempPhotoFile").onchange = e => {
 };
 $("photoPrev").onclick = () => $("tempPhotoFile").click();   // 사진 바꾸기
 
+// 스테이지 표시의 단일 출처. 예전엔 applyMode 와 speakVideo 가 같은 5줄을 각각 대입해서,
+// "#vid 와 #photoPrev 는 절대 같이 보이면 안 된다" 는 규칙이 두 함수에 흩어져 있었다.
+// #stageVid 한 칸을 미리보기(photo)와 영상(video)이 번갈아 쓰는 게 핵심이다.
+function showStage(which) {   // "2d" | "3d" | "photo" | "video"
+  $("stage2d").style.display = which === "2d" ? "" : "none";
+  $("stage3d").style.display = which === "3d" ? "" : "none";
+  $("stageVid").style.display = (which === "photo" || which === "video") ? "" : "none";
+  $("photoPrev").style.display = which === "photo" ? "" : "none";
+  $("vid").style.display = which === "video" ? "" : "none";
+}
+
 // 모드 전환: 스테이지 표시/숨김 + 해당 모드의 에셋 로드. 드롭다운 변경과 초기 진입이 같은 경로를 탄다.
 async function applyMode() {
   const on3d = is3D(), onPhoto = isPhoto();
-  $("stage3d").style.display = on3d ? "" : "none";
-  $("stage2d").style.display = (on3d || onPhoto) ? "none" : "";
-  // 사진 모드는 #stageVid 를 미리보기 자리로 쓴다. 그 외엔 캐릭터를 바꾸면 이전 영상을 접는다.
-  $("stageVid").style.display = onPhoto ? "" : "none";
-  $("photoPrev").style.display = onPhoto ? "" : "none";
-  $("vid").style.display = onPhoto ? "none" : "";   // 사진 모드 진입은 미리보기부터 (speakVideo 가 되돌린다)
+  // 사진 모드 진입은 미리보기부터 — speakVideo 가 재생할 때 "video" 로 넘긴다.
+  showStage(on3d ? "3d" : onPhoto ? "photo" : "2d");
   $("saveVid").hidden = true;
   $("vid").pause();
   // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 그 캔버스가 안 보이는 모드에선 숨긴다
@@ -268,7 +274,7 @@ async function applyMode() {
   // 이전 캐릭터 상태로 남는다.
   const useVid = hasVideo();
   $("modeVideo").disabled = !canVideo();
-  $("modeLive").disabled = !canLive();
+  $("modeLive").disabled = isPhoto();   // 사진엔 스프라이트 자산이 없다
   $("modeVideo").checked = useVid;
   $("modeLive").checked = !useVid;
   // 엔진 셀렉트는 실시간 경로에서만 읽힌다 — 영상일 땐 "~0.5초" 라벨이 거짓말이라 감춘다.
@@ -540,10 +546,7 @@ async function speakVideo(text, emotion) {
   const v = $("vid");
   v.src = `/api/stream/${job_id}`;
   v.onplaying = () => setStatus("");
-  $("stage2d").style.display = "none";
-  $("stageVid").style.display = "";
-  $("photoPrev").style.display = "none";   // 미리보기와 자리를 나눠 쓴다 — 재생 중엔 영상
-  v.style.display = "";
+  showStage("video");
   v.play().catch(() => {});
   for (let i = 0; i < 150; i++) {
     const j = await fetch(`/api/jobs/${job_id}`).then(x => x.json());
