@@ -15,3 +15,6 @@ __pycache__/
 
 # 3D 에셋 (41MB 재생성 가능 산출물 — tools/build_mark_glb.py. 라이선스는 MIT(Maya-ACE)로 확인, 공개 배포는 drawface-live 담당)
 static/assets3d/
+
+# 캐릭터 원본(JoyVASA 입력) — 개인 그림이고 42MB+, uploads 에서 복구 가능
+assets_characters/*/source.png
