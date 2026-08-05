@@ -52,6 +52,7 @@ class SpeakReq(BaseModel):
     blink_interval: float = 4.0  # 평균 깜빡임 간격(초), 0 = 깜빡임 없음
     blink_strength: float = 1.0  # 0~1
     image_b64: str | None = None  # 업로드 사진(dataURL/base64). 없으면 폴더 기본 이미지
+    char_id: str | None = None    # 등록 캐릭터 id — 그 캐릭터의 source.png 로 영상 생성
 
 
 class SpeakRtReq(BaseModel):
@@ -135,9 +136,13 @@ def run_video_job(job_id: str, job: dict):
     wav = OUT / f"{job_id}.wav"
     tts_to_wav(req.text, req.voice, wav)
 
-    # 업로드 사진이 있으면 그 사진으로 애니메이션(실사 → 얼굴 크롭 켬)
+    # 등록 캐릭터면 그 원본으로 애니메이션. base.png(눈·입 지운 것)가 아니라 source.png 다.
     img_path, do_crop = None, None
-    if req.image_b64:
+    if req.char_id:
+        cand = ROOT / "assets_characters" / req.char_id / "source.png"
+        if cand.exists():
+            img_path, do_crop = cand, True
+    if img_path is None and req.image_b64:
         updir = ROOT / "uploads"
         updir.mkdir(exist_ok=True)
         img_path = updir / f"{job_id}.png"
@@ -150,8 +155,9 @@ def run_video_job(job_id: str, job: dict):
         pipeline.generate(wav, mp4, blink_interval=req.blink_interval,
                           blink_strength=req.blink_strength, image=img_path, do_crop=do_crop)
     finally:
-        if img_path and img_path.exists():
-            img_path.unlink()   # 업로드 원본은 영상 만든 뒤 정리
+        # 업로드 임시본만 정리한다 — 캐릭터 source.png 는 영구 자산이라 건드리지 않는다.
+        if img_path and img_path.exists() and img_path.parent.name == "uploads":
+            img_path.unlink()
     job["status"] = "done"
     job["video_url"] = f"/media/{job_id}.mp4"
 
@@ -353,6 +359,9 @@ def create_character(req: CharacterCreateReq):
         mouth_box=tuple(req.mouth_box), mouth_center=tuple(req.mouth_center),
         mouth_style={"width": width}, jaw_drop=6, closed_eye=(None, eye_lw),
         deletable=True)
+    # 원본을 캐릭터 자산으로 보관 — JoyVASA(영상 생성)는 눈·입이 지워진 base 가 아니라
+    # 손대지 않은 그림이 있어야 한다. 캐릭터를 지울 때 같이 지워지도록 폴더 안에 둔다.
+    shutil.copyfile(src, ROOT / "assets_characters" / char_id / "source.png")
     return {"id": char_id}
 
 
@@ -386,7 +395,10 @@ def characters():
                 except Exception:
                     mf = {}
                 out.append({"id": d.name, "name": mf.get("name", d.name),
-                            "deletable": bool(mf.get("deletable", False))})
+                            "deletable": bool(mf.get("deletable", False)),
+                            # 원본이 있으면 JoyVASA(생성) 경로를 쓸 수 있다 — 스프라이트
+                            # 워프로는 입이 실제로 벌어지지 않는다(구강 픽셀이 원본에 없다).
+                            "video": (d / "source.png").exists()})
     return out
 
 

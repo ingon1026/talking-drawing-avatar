@@ -25,6 +25,8 @@
   /* 3D 스테이지 — 2D 와 형제로 두고 한쪽만 표시한다 (배경은 어둡게, 드래그로 헤드 회전) */
   #stage3d { background: #0d0d12; cursor: grab; }
   #cv3d { width: 100%; height: 100%; display: block; }
+  #stageVid { background: #0d0d12; }
+  #vid { width: 100%; height: 100%; display: block; object-fit: contain; }
   form { display: flex; gap: 8px; margin-top: 16px; }
   input[type=text] {
     flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35;
@@ -66,6 +68,7 @@
     <canvas id="cv" width="512" height="512"></canvas>
   </div></div>
   <div class="stage" id="stage3d" style="display:none"><canvas id="cv3d"></canvas></div>
+  <div class="stage" id="stageVid" style="display:none"><video id="vid" playsinline></video></div>
 
   <form id="form">
     <button id="micBtn" type="button" title="마이크로 말 걸기" style="display:none">음성</button>
@@ -151,6 +154,7 @@ const MARK3D = "__mark3d__";
 const is3D = () => $("character").value === MARK3D;
 
 let charList = [];
+const hasVideo = () => !is3D() && !!(charList.find(c => c.id === $("character").value) || {}).video;
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
   charList = list;
@@ -169,6 +173,8 @@ async function applyMode() {
   const on3d = is3D();
   $("stage3d").style.display = on3d ? "" : "none";
   $("stage2d").style.display = on3d ? "none" : "";
+  $("stageVid").style.display = "none";   // 캐릭터를 바꾸면 이전 영상은 접는다
+  $("vid").pause();
   // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 3D 에선 숨긴다
   $("addChar").style.display = on3d ? "none" : "";
   updateDelBtn();
@@ -381,11 +387,41 @@ function render(now) {
 requestAnimationFrame(render);
 
 // ---------- 발화 (감정 프리셋 + 목소리 톤 적용 후 재생) ----------
-const speak = (text, emotion) => AvatarCore.speakWithEmotion({
-  text, emotion, autoEmo: $("autoEmo").checked, emo,
-  voice: $("voice").value, engine: $("engine").value,
-  audioEl: audio, onAnim: a => { anim = a; },
-});
+// 등록 캐릭터에 원본(source.png)이 있으면 JoyVASA 로 영상을 만들어 재생한다.
+// 스프라이트 워프로는 입이 실제로 벌어지지 않는다 — 벌어진 입의 픽셀이 그림에 없어서
+// 만들어 넣어야 하고, 만든 구강은 어떤 모양이든 원본과 겉돈다(여러 번 실측).
+// JoyVASA 는 이·혀·구강을 화풍에 맞게 생성한다. 대신 웜 4~5초가 걸린다.
+async function speakVideo(text) {
+  setStatus("영상 만드는 중… (4~5초)");
+  const r = await fetch("/api/speak", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value }),
+  });
+  if (!r.ok) throw new Error("영상 생성 요청 실패");
+  const { job_id } = await r.json();
+  for (let i = 0; i < 150; i++) {
+    const j = await fetch(`/api/jobs/${job_id}`).then(x => x.json());
+    if (j.status === "done") {
+      const v = $("vid");
+      v.src = j.video_url;
+      $("stage2d").style.display = "none";
+      $("stageVid").style.display = "";
+      await v.play().catch(() => {});
+      return;
+    }
+    if (j.status === "error") throw new Error(j.error || "영상 생성 실패");
+    await new Promise(res => setTimeout(res, 400));
+  }
+  throw new Error("영상 생성 시간 초과");
+}
+
+const speak = (text, emotion) => hasVideo()
+  ? speakVideo(text)
+  : AvatarCore.speakWithEmotion({
+      text, emotion, autoEmo: $("autoEmo").checked, emo,
+      voice: $("voice").value, engine: $("engine").value,
+      audioEl: audio, onAnim: a => { anim = a; },
+    });
 
 // ---------- 대화 모드 (마이크/입력 → LLM → 아바타 응답; 코어가 소유) ----------
 const chatCtl = AvatarCore.makeChat({
