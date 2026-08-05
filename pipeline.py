@@ -17,31 +17,55 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 FPS = 25  # JoyVASA inference_config output_fps 기본값
 
 # 감정 → LivePortrait 표정 벡터(exp 21×3) 델타.
-# 인덱스 의미가 문서화돼 있지 않아 tools/exp_index_probe.py 로 실측했다:
-#   2 y축 = 눈썹 (양수 올림, 국소도 0.60 — 얼굴도 약간 따라 움직인다)
-#   6·12·14·19·20 = 입술 (소스에 명시, 립싱크가 이미 쓰므로 건드리지 않는다)
-#   3·4·11·15 = 얼굴 전체 상하 이동 — 눈썹처럼 보이지만 전역이라 쓰면 안 된다
-# ±0.08 은 과하고 ±0.04 가 화면에서 읽히는 크기다.
-BROW_IDX, BROW_AXIS = 2, 1
-# 값은 avatar_core.js EMOTIONS 의 brow 채널 최대치 × BROW_SCALE 로 유도한다 — 손으로 적으면
-# 두 경로의 감정 간 상대 세기가 어긋난다(실시간은 fear 0.85 > sad 0.7 인데 영상은 같았다).
-BROW_SCALE = 0.053         # ±0.045 가 화면에서 읽히는 상한이 되도록 맞춘 배율
-_BROW_UP = {"sad": 0.7, "surprise": 0.75, "fear": 0.85, "joy": 0.0, "shy": 0.0, "neutral": 0.0}
-_BROW_DOWN = {"angry": 0.85}
-EMOTION_BROW = {k: round(v * BROW_SCALE, 4) for k, v in _BROW_UP.items()}
-EMOTION_BROW.update({k: -round(v * BROW_SCALE, 4) for k, v in _BROW_DOWN.items()})
-# joy·shy 는 EMOTIONS 에 brow 채널이 아예 없다 — 그 감정의 신호는 입꼬리·볼에 있고
-# 영상 경로는 아직 그 축을 못 쓴다. 억지로 눈썹을 올리면 실시간과 다른 얼굴이 된다.
+#
+# 인덱스 의미가 업스트림에 문서화돼 있지 않아 tools/exp_index_probe.py 로 실측했다.
+# 두 번 크게 틀렸으니 고칠 때 같은 함정을 조심할 것:
+#   1) JoyVASA 모션 생성은 디퓨전이라 시드를 안 박으면 널 차분만으로 입 대역이 321px
+#      변한다 — 신호(600 안팎)와 구분이 안 된다. probe 가 torch.manual_seed 를 박는 이유.
+#   2) 대역별 변화량이 큰 인덱스가 그 부위인 게 아니다. 3·4·11·15 는 얼굴 전체를
+#      상하로 옮겨서 눈썹 대역이 커 보인다. 국소도로 거르고, 반드시 렌더를 눈으로 볼 것.
+#
+# 눈썹은 2항으로 움직인다(단일 인덱스가 아니다). 실사 이미지(joyvasa_005)로 검증:
+#   올림 = [1,1] +k / [2,1] -k     내림 = 그 반대
+# 예전에 [2,1] 양수를 "올림"으로 적었는데 반대였다 — 앞머리가 눈썹을 가리는 그림으로
+# 판정해서 얼굴 전체 이동을 눈썹으로 오인했다.
+BROW_UP = ((1, 1, +1.0), (2, 1, -1.0))   # 계수는 아래 스케일로 곱한다
+BROW_SCALE = 0.035                        # ±0.03 이 화면에서 뚜렷하고 과하지 않은 크기
+
+# 미소는 8항 조합(상류 LivePortrait update_delta_new_smile 을 우리 경로로 재현·실측).
+# 립싱크가 6·12·14·17·19·20 을 덮어쓰지만 우리 주입은 그 *뒤*라 가산으로 합성된다 —
+# 그래서 14·17·20 을 써도 된다. s=+0.5 가 안전 상한: +1.0 이면 닫힌 비제마에 치아가 샌다.
+SMILE = ((20, 1, -0.01), (14, 1, -0.02), (17, 1, 0.0065), (17, 2, 0.003),
+         (13, 1, -0.00275), (16, 1, -0.00275), (3, 1, -0.0035), (7, 1, -0.0035))
+SMILE_MAX = 0.5
+
+# 감정별 (눈썹 올림 정도, 미소 정도). 부호·크기는 avatar_core.js EMOTIONS 와 맞춘다.
+# 음수 미소는 "오므림(뾰로통)"이지 찡그림이 아니고 입 벌림과 싸운다 — 찡그림은
+# 눈썹 내림으로만 표현한다(실측: -0.5 면 열린 비제마가 닫힌 입술로 뭉개진다).
+EMOTION_FACE = {
+    "neutral":  (0.0,  0.0),
+    "joy":      (0.0,  1.0),    # EMOTIONS.joy 는 brow 채널이 없고 mouthsmile 0.55
+    "sad":      (0.7,  0.0),    # browinnerup 0.7
+    "angry":   (-0.85, 0.0),    # browdown 0.85
+    "surprise": (0.75, 0.0),    # browouterup 0.75
+    "fear":     (0.85, 0.0),    # browinnerup 0.85
+    "shy":      (0.0,  0.4),    # mouthsmile 0.3 — 옅은 미소
+}
 
 
 def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
     """감정 라벨 → (21,3) 표정 델타. 없거나 중립이면 None(주입 안 함)."""
-    v = EMOTION_BROW.get(emo or "neutral", 0.0) * max(0.0, min(1.0, intensity))
-    if abs(v) < 1e-4:
+    brow, smile = EMOTION_FACE.get(emo or "neutral", (0.0, 0.0))
+    k = max(0.0, min(1.0, intensity))
+    brow, smile = brow * k, smile * k * SMILE_MAX
+    if abs(brow) < 1e-3 and abs(smile) < 1e-3:
         return None
     import numpy as np
     d = np.zeros((21, 3), dtype="float32")
-    d[BROW_IDX, BROW_AXIS] = v
+    for i, ax, c in BROW_UP:
+        d[i, ax] += brow * BROW_SCALE * c
+    for i, ax, c in SMILE:
+        d[i, ax] += smile * c
     return d
 
 

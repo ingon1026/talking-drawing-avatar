@@ -44,6 +44,18 @@ def bands(diff, thr=18):
     return [int((diff[a:b] > thr).sum()) for a, b in cuts]
 
 
+# 입 주변만 잘라 좌/우로 나눈다. 입꼬리는 한쪽만 움직이는 경우가 많아
+# (한 인덱스 = 한 implicit keypoint) 좌우 비대칭이 판정 근거가 된다.
+MOUTH_ROI = (230, 290, 190, 320)   # y0, y1, x0, x1  (512 프레임 기준)
+
+
+def mouth_lr(diff, thr=18):
+    y0, y1, x0, x1 = MOUTH_ROI
+    roi = diff[y0:y1, x0:x1] > thr
+    mid = roi.shape[1] // 2
+    return int(roi[:, :mid].sum()), int(roi[:, mid:].sum())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--image", required=True)
@@ -68,23 +80,35 @@ def main():
     base = np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, None)), dtype=np.int16)
     idxs = a.idx if a.idx else list(range(21))
     print(f"축={a.axis} 진폭={a.amp}  (입술 인덱스 {LIP_IDX} 는 소스에 명시됨)")
-    print(f"{'idx':>4} {'눈썹':>7} {'눈':>7} {'입':>7}  {'국소':>5}  판정")
-    for i in idxs:
-        d = np.zeros((21, 3), dtype=np.float32)
-        d[i, a.axis] = a.amp
-        cur = np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, d)), dtype=np.int16)
-        b = bands(np.abs(cur - base))
+    print(f"{'idx':>4} {'눈썹':>7} {'눈':>7} {'입':>7}  {'국소':>5} {'입L':>5} {'입R':>5}  판정")
+
+    def row(label, cur):
+        diff = np.abs(cur - base)
+        b = bands(diff)
+        lo, ro = mouth_lr(diff)
         # 국소성 판정 — 어느 대역이 "가장 큰가"가 아니라 "그 대역만 변했는가".
         # 인덱스 3·4 는 얼굴 전체를 상하로 옮겨서 세 대역이 다 커진다. 그건 눈썹이 아니다.
         tot = sum(b) or 1
-        share = [x / tot for x in b]
-        loc = max(share)
+        loc = max(x / tot for x in b)
         tag = "-" if max(b) < 40 else (
             f"{['눈썹', '눈', '입'][int(np.argmax(b))]}" if loc >= 0.55 else "전역(머리)")
-        print(f"{i:>4} {b[0]:>7} {b[1]:>7} {b[2]:>7}   {loc:.2f}  {tag}")
+        print(f"{label:>4} {b[0]:>7} {b[1]:>7} {b[2]:>7}   {loc:.2f} {lo:>5} {ro:>5}  {tag}")
+
+    # 노이즈 바닥 — 델타 없이 한 번 더 렌더한 차분. 이 값보다 작은 변화는 의미 없다.
+    row("null", np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, None)), dtype=np.int16))
+    for i in idxs:
+        d = np.zeros((21, 3), dtype=np.float32)
+        d[i, a.axis] = a.amp
+        row(str(i), np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, d)), dtype=np.int16))
 
 
 def _gen(pipe, img, wav, out_dir, delta):
+    # JoyVASA 의 모션 생성은 디퓨전 샘플링이라 시드를 안 고정하면 같은 wav·같은 그림도
+    # 매번 다른 입 모양이 나온다. 실측해 보니 그 노이즈만으로 입 대역 변화 픽셀이 321개 —
+    # 델타의 신호(600 안팎)와 구분이 안 된다. 렌더마다 같은 시드를 박아 차분을 깨끗하게 만든다.
+    import torch
+    torch.manual_seed(0)
+    torch.cuda.manual_seed_all(0)
     out = out_dir / "_probe.mp4"
     pipe.generate(wav, out, blink_interval=0, blink_strength=0, image=Path(img),
                   do_crop=True, exp_delta=delta)
