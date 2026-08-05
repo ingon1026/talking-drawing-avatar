@@ -134,6 +134,10 @@ def make_blink_schedule(n_frames: int, interval_s: float, strength: float):
     return sched
 
 
+# 상류 렌더 루프가 프레임을 쌓는 리스트에 넣을 자리표시자. 위 주석 참조.
+_EMPTY_FRAME = None   # 첫 사용 시 numpy 로 만든다 (모듈 임포트에 numpy 를 끌지 않으려고)
+
+
 def _partial_fields(cls, kwargs):
     return cls(**{k: v for k, v in kwargs.items() if hasattr(cls, k)})
 
@@ -329,8 +333,7 @@ class AvatarPipeline:
 
     def generate(self, wav: Path, out_mp4: Path,
                  blink_interval: float = 4.0, blink_strength: float = 1.0,
-                 exp_delta=None, emo_segments=None,
-                 image: Path = None, do_crop: bool = None) -> Path:
+                 exp_delta=None, emo_segments=None, image: Path = None) -> Path:
         """wav + 그림 → 립싱크 mp4 (blink_interval초마다 강제 깜빡임, 0 = 주입 없음).
 
         image: **필수.** 예전엔 없으면 리포 최상위를 알파벳 순으로 훑어 첫 이미지를 썼는데,
@@ -338,7 +341,11 @@ class AvatarPipeline:
             낙서)가 잡혀서 "/" 로 만든 영상이 전부 돼지였다. 얼굴은 호출측이 정한다.
         emo_segments: [(시작초, 감정, 강도)] — 문장마다 표정이 바뀐다. 앱은 이쪽만 쓴다.
         exp_delta: (21,3) 상수 델타. tools/exp_index_probe.py 가 인덱스를 실측할 때 쓴다.
-        do_crop: 실사 얼굴이면 True(InsightFace 크롭). 미지정 시 인스턴스 기본값.
+
+        do_crop 인자는 없앴다. 상류 execute() 가 args 에서 읽는 건 reference/audio/
+        output_dir + 우리 스케줄 둘뿐이고 flag_do_crop 은 **안 읽는다** — 크롭 여부는
+        로드 시점의 inference_cfg 값(=self.do_crop)으로만 정해진다. 요청마다 바꿀 수
+        있는 것처럼 보이는 노브였는데 실제로는 아무 일도 안 했다.
         """
         img = Path(image) if image else None
         if img is None or not img.exists():
@@ -353,7 +360,7 @@ class AvatarPipeline:
         args = self._ArgumentConfig(
             animation_mode=self.animation_mode, reference=str(img), audio=str(wav),
             output_dir=str(out_mp4.parent), cfg_scale=self.cfg_scale,
-            flag_do_crop=self.do_crop if do_crop is None else do_crop)
+            flag_do_crop=self.do_crop)   # execute() 는 안 읽는다 — 위 docstring 참조
         args.eye_ratio_schedule = sched
         # 표정 델타. 문장 단위로 바뀌므로 프레임별 스케줄이다 — 상수 exp_delta 는 인덱스
         # 실측용이라 n_frames 만큼 펴서 같은 자리에 넣는다.
@@ -365,6 +372,12 @@ class AvatarPipeline:
         # 프레임을 나오는 대로 인코딩한다 — 상류의 끝단 일괄 인코딩은 무력화한다.
         # parse_output 이 렌더 루프에서 프레임당 정확히 한 번, 순서대로 불리는 유일한 지점이라
         # JoyVASA 패치를 늘리지 않고 여기에 붙는다.
+        global _EMPTY_FRAME
+        if _EMPTY_FRAME is None:
+            import numpy as np
+            _EMPTY_FRAME = np.empty((1, 0, 0, 3), dtype="uint8")
+        # 상류와 같은 조건식을 본다. self.do_crop 이 False 인 동안은 걸릴 일이 없지만,
+        # 그걸 켜는 날 pasteback 이 살아나 이 인코더가 합성 전 프레임을 내보내게 된다.
         inf = pipe.live_portrait_wrapper.inference_cfg
         if inf.flag_pasteback and inf.flag_do_crop and inf.flag_stitching:
             raise RuntimeError("pasteback 경로는 parse_output 뒤에 프레임을 또 합성한다 — "
@@ -390,7 +403,11 @@ class AvatarPipeline:
             f = (out.mul(255).clamp(0, 255).to(torch.uint8)
                     .permute(0, 2, 3, 1).contiguous().cpu().numpy())   # 1xHxWx3 uint8
             enc(f[0])
-            return f
+            # 상류는 이 반환값의 [0] 을 I_p_lst 에 쌓는데, 그 리스트를 읽는 건 아래에서
+            # 죽여 둔 images2video 뿐이다 — 즉 전량이 죽은 보관이다. 프레임당 786KB 라
+            # 오디오 1초에 19.7MB, 60초 내레이션이면 1.2GB 가 된다.
+            # **슬라이스(f[:, :0])로 줄이면 안 된다** — 뷰라서 원본 버퍼가 그대로 살아 있다.
+            return _EMPTY_FRAME
 
         lw.parse_output = parse_and_stream
         P.images2video = P.add_audio_to_video = lambda *a, **k: None

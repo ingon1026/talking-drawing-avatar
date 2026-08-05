@@ -233,8 +233,12 @@ def _char_video_ok(d: Path) -> bool:
     """캐릭터 폴더가 영상(JoyVASA) 경로를 탈 수 있는가. 목록과 /api/speak 가 같이 쓴다 —
     두 곳이 다른 규칙을 쓰면 클라이언트는 라디오를 열어 주고 서버는 막는 상태가 된다.
 
-    manifest 의 "video" 가 정답이다(등록 때 can_animate 로 판정해 적는다). 키가 없으면
-    예전 캐릭터라 source.png 존재 여부로 폴백한다 — 마이그레이션은 별도 담당.
+    manifest 의 "video" 가 정답이다(등록 때 can_animate 로 판정해 적는다).
+
+    **폴백을 지우지 마라.** 기존 캐릭터 마이그레이션은 tools/rejudge_video.py 로 끝났지만,
+    manifest 를 쓰는 곳이 둘인데 이 키를 아는 건 하나뿐이다 — character_builder 는 모르고
+    create_character 만 안다. tools/make_drawn_characters.py 처럼 build_character 를 직접
+    부르면 오늘도 키 없는 manifest 가 나온다. 지우면 그런 캐릭터에서 KeyError 로 500 이다.
     """
     try:
         mf = json.loads((d / "manifest.json").read_text())
@@ -304,20 +308,24 @@ def run_video_job(job_id: str, job: dict):
                    prosody={"rate": req.rate, "pitch": req.pitch, "volume": req.volume})
 
     # 등록 캐릭터면 그 원본으로 애니메이션. base.png(눈·입 지운 것)가 아니라 source.png 다.
-    img_path, do_crop = None, None
+    img_path = None
     if req.char_id:
         cand = ROOT / "assets_characters" / req.char_id / "source.png"
         if cand.exists():
-            img_path, do_crop = cand, True
+            img_path = cand
     if img_path is None and req.image_b64:
-        img_path, do_crop = drop_upload(req.image_b64, job_id), True
+        img_path = drop_upload(req.image_b64, job_id)
+        # jobs 엔트리는 stream_video 가 status 를 봐야 해서 못 지운다. 그런데 그 안의
+        # SpeakReq 가 dataURL 을 통째로 붙잡고 있어 프로세스 수명 내내 남는다 —
+        # 사진 한 장이 약 4MB 라 임시 사진으로 100문장이면 400MB. 파일로 떨군 직후 뗀다.
+        req.image_b64 = None
 
     job["status"] = "animating"
     mp4 = OUT / f"{job_id}.mp4"
     try:
         # 문장별 판정이 없으면(수동 버튼 등) 한 구간짜리 스케줄 = 예전과 같은 통짜 표정.
         pipeline.generate(wav, mp4, blink_interval=req.blink_interval,
-                          blink_strength=req.blink_strength, image=img_path, do_crop=do_crop,
+                          blink_strength=req.blink_strength, image=img_path,
                           emo_segments=segments or [(0.0, emotion, intensity)])
     finally:
         # 업로드 임시본만 정리한다 — 캐릭터 source.png 는 영구 자산이라 건드리지 않는다.

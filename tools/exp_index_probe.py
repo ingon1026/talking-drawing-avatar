@@ -124,7 +124,7 @@ def _gen(pipe, img, wav, out_dir, delta):
     torch.cuda.manual_seed_all(0)
     out = out_dir / "_probe.mp4"
     pipe.generate(wav, out, blink_interval=0, blink_strength=0, image=Path(img),
-                  do_crop=True, exp_delta=delta)
+                  exp_delta=delta)
     return out
 
 

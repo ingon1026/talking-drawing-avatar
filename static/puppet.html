@@ -151,6 +151,7 @@ const PART_FILES = ["base", "brow_L", "brow_R", "eye_L_open", "eye_R_open",
 // 안 적은 키(eyeHalf 등)에 앞 캐릭터 값이 그대로 남아 눈 위치·크기가 어긋났다.
 const MANIFEST_DEFAULTS = { pupilRange: 7, browRange: 10, jawDrop: 8 };
 let parts = {}, manifest = { ...MANIFEST_DEFAULTS };
+let loadedChar = null;   // 지금 parts 에 올라와 있는 캐릭터 id — 중복 로드를 막는다
 
 async function loadCharacter(id) {
   const dir = `/characters/${id}`;
@@ -187,7 +188,12 @@ const canVideo = () => joyvasaReady && !is3D()
 // 사진 모드는 스프라이트 파츠가 없어 실시간 렌더 자체가 불가능하다 — 영상 강제.
 // wantVideo 를 무시하는 게 핵심이다: 라디오만 잠그면 직전에 실시간을 골라둔 사용자가
 // speak() 에서 파츠 없는 실시간 경로로 빠진다.
-const hasVideo = () => isPhoto() || (canVideo() && wantVideo);
+// 사진처럼 스프라이트 자산이 없는 항목은 실시간이 불가능하니 영상으로 강제된다.
+// isPhoto() 를 여기 또 적으면(canVideo 안에 이미 있다) 실시간 불가 항목이 하나 더
+// 생길 때 세 술어를 동시에 고쳐야 하고, 하나만 고치면 라디오는 잠겼는데 speak() 은
+// 실시간 경로로 빠진다. 규칙으로만 적는다.
+const canLive = () => !isPhoto();
+const hasVideo = () => canVideo() && (wantVideo || !canLive());
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
   charList = list;
@@ -274,14 +280,20 @@ async function applyMode() {
   // 이전 캐릭터 상태로 남는다.
   const useVid = hasVideo();
   $("modeVideo").disabled = !canVideo();
-  $("modeLive").disabled = isPhoto();   // 사진엔 스프라이트 자산이 없다
+  $("modeLive").disabled = !canLive();
   $("modeVideo").checked = useVid;
   $("modeLive").checked = !useVid;
   // 엔진 셀렉트는 실시간 경로에서만 읽힌다 — 영상일 땐 "~0.5초" 라벨이 거짓말이라 감춘다.
   // disabled 가 아니라 hidden 인 이유가 그것이다(회색이어도 텍스트는 읽힌다).
   $("engine").style.display = useVid ? "none" : "";
+  // 에셋은 캐릭터가 실제로 바뀐 경우에만 다시 받는다. 출력 라디오도 applyMode 를 타는데
+  // 실시간/영상 선택은 스프라이트 파츠와 무관하다 — 무조건 다시 받으면 클릭마다
+  // manifest 1 + png 최대 17건(있는 파츠가 8장이면 9건은 404, 404 는 캐시가 안 된다)이
+  // 서버까지 가고 워프 텍스처도 512² 재업로드된다.
+  const id = $("character").value;
   if (on3d) await ensure3D().catch(e => setStatus("3D 로드 실패: " + e.message, true));
-  else if (!onPhoto) await loadCharacter($("character").value);   // 사진엔 파츠가 없다 (부르면 404 17개)
+  else if (!onPhoto && id !== loadedChar) { loadedChar = id; await loadCharacter(id); }
+  if (on3d || onPhoto) loadedChar = null;   // 돌아오면 다시 받아야 한다
 }
 
 // applyMode 안의 .checked 대입은 프로그래밍적이라 change 를 발사하지 않는다 — 그래서 여기서
