@@ -387,6 +387,11 @@ class AvatarPipeline:
         lw = pipe.live_portrait_wrapper
         enc, orig = _StreamEncoder(out_mp4, wav), lw.parse_output
         keep = (P.images2video, P.add_audio_to_video)
+        # **generate() 는 동시에 두 번 돌면 안 된다.** 아래 대입이 모듈 전역(P.*)과 공유
+        # 인스턴스 속성(lw.parse_output)이라, 두 잡이 겹치면 한쪽 finally 가 다른 쪽이
+        # 실행 중인 원본을 복구하고 enc 도 서로 남의 프레임을 받는다. 지금 안전한 이유는
+        # app.py 의 워커 스레드가 **하나**이기 때문이다 — 그 전제가 여기 없으면 워커를
+        # 늘리는 순간 조용히 깨진다. 늘릴 거면 여기에 락을 걸거나 프로세스를 나눌 것.
 
         def parse_and_stream(out):
             # 상류 parse_output 을 부르지 않고 같은 일을 GPU 에서 한다. 상류는 fp32 CHW 3MB 를

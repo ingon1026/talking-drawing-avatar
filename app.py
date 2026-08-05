@@ -388,7 +388,9 @@ gpu_lock = threading.Lock()   # 영상 잡(워커)과 동기 rt 발화가 GPU를
 
 
 def worker():
-    # ponytail: GPU가 직렬이라 워커 1개 큐로 충분 — rt 발화는 동기 엔드포인트로 이동, 여긴 영상 전용
+    # ponytail: GPU가 직렬이라 워커 1개 큐로 충분 — rt 발화는 동기 엔드포인트로 이동, 여긴 영상 전용.
+    # **늘릴 거면 pipeline.generate() 를 먼저 보라** — 거기 몽키패치가 모듈 전역이라
+    # 워커가 하나라는 전제로만 안전하다.
     while True:
         job_id = work_q.get()
         job = jobs[job_id]
