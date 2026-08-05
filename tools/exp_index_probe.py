@@ -4,9 +4,17 @@
 
 각 인덱스에 델타를 주고 1프레임씩 렌더해, 중립 프레임 대비 어느 영역이 변했는지 출력한다.
 JoyVASA 는 이 벡터의 의미를 문서화하지 않았고 소스 주석에 입술 인덱스([6,12,14,17,19,20])만
-있어서, 눈썹·눈꼬리는 실측으로 찾아야 한다.
+있어서 나머지는 실측으로 찾아야 한다.
 
-출력의 y 대역은 얼굴을 셋으로 나눈 것: 상(눈썹) / 중(눈) / 하(입).
+읽는 법 — 두 번 크게 틀린 뒤에 얻은 규칙이다:
+
+  * **`null` 행을 먼저 본다.** 델타 없이 한 번 더 렌더한 차분이다. 시드를 박아서 0 이어야
+    정상이고, 0 이 아니면 그 값이 노이즈 바닥이라 그 아래 신호는 못 믿는다.
+  * **국소도로 판정한다.** "어느 대역이 가장 큰가"로 보면 틀린다 — 3·4·11·15 는 얼굴
+    전체를 상하로 옮겨서 눈썹 대역이 커 보이고, 실제로 눈썹으로 오판한 적이 있다.
+  * **숫자로 끝내지 말고 렌더를 눈으로 본다.** 눈썹 부호를 반대로 적은 적이 있다
+    (앞머리가 눈썹을 가리는 그림이라 얼굴 이동을 눈썹으로 봤다). 눈썹을 볼 거면
+    이마가 드러난 그림을 쓸 것 — JoyVASA/assets/examples/imgs/joyvasa_005.png 등.
 """
 import argparse
 import sys
@@ -46,11 +54,14 @@ def bands(diff, thr=18):
 
 # 입 주변만 잘라 좌/우로 나눈다. 입꼬리는 한쪽만 움직이는 경우가 많아
 # (한 인덱스 = 한 implicit keypoint) 좌우 비대칭이 판정 근거가 된다.
+#
+# 좌표는 한복 소녀(orig_rgb.png) 512 프레임에 맞춘 값이다 — **다른 그림에서는 입L/입R
+# 컬럼이 무의미하다.** 얼굴 위치가 다르면 --mouth-roi 로 넘기거나 그 컬럼을 무시할 것.
 MOUTH_ROI = (230, 290, 190, 320)   # y0, y1, x0, x1  (512 프레임 기준)
 
 
-def mouth_lr(diff, thr=18):
-    y0, y1, x0, x1 = MOUTH_ROI
+def mouth_lr(diff, roi, thr=18):
+    y0, y1, x0, x1 = roi
     roi = diff[y0:y1, x0:x1] > thr
     mid = roi.shape[1] // 2
     return int(roi[:, :mid].sum()), int(roi[:, mid:].sum())
@@ -62,6 +73,8 @@ def main():
     ap.add_argument("--idx", type=int, nargs="*", help="검사할 인덱스(생략 시 0~20 전부)")
     ap.add_argument("--amp", type=float, default=0.06, help="델타 크기")
     ap.add_argument("--axis", type=int, default=1, help="0=x 1=y 2=z")
+    ap.add_argument("--mouth-roi", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"),
+                    default=MOUTH_ROI, help="입 ROI(512 프레임 기준) — 그림마다 다르다")
     a = ap.parse_args()
     sys.argv = sys.argv[:1]   # JoyVASA ArgumentConfig 가 argv 를 다시 파싱한다
 
@@ -85,7 +98,7 @@ def main():
     def row(label, cur):
         diff = np.abs(cur - base)
         b = bands(diff)
-        lo, ro = mouth_lr(diff)
+        lo, ro = mouth_lr(diff, tuple(a.mouth_roi))
         # 국소성 판정 — 어느 대역이 "가장 큰가"가 아니라 "그 대역만 변했는가".
         # 인덱스 3·4 는 얼굴 전체를 상하로 옮겨서 세 대역이 다 커진다. 그건 눈썹이 아니다.
         tot = sum(b) or 1
