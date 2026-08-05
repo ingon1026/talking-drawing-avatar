@@ -1,0 +1,19 @@
+--- a/src/live_portrait_wmg_pipeline.py
++++ b/src/live_portrait_wmg_pipeline.py
+@@ -123,6 +123,16 @@
+             elif inf_cfg.animation_region == "lip":
+                 for lip_idx in [6, 12, 14, 17, 19, 20]:
+                     delta_new[:, lip_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp']))[:, lip_idx, :]
++            # expression injection: args.exp_delta_schedule[i] = (21,3) 델타 (None = 주입 없음).
++            # 감정(눈썹·입꼬리)을 표정 벡터에 직접 더한다 — 렌더된 영상 위에 스프라이트를
++            # 얹으면 머리가 움직일 때 정합이 깨지지만, 여기서 넣으면 워프를 같이 탄다.
++            exp_delta_schedule = getattr(args, 'exp_delta_schedule', None)
++            if exp_delta_schedule is not None and i < len(exp_delta_schedule) \
++                    and exp_delta_schedule[i] is not None:
++                delta_new = delta_new + torch.as_tensor(
++                    exp_delta_schedule[i], dtype=delta_new.dtype, device=delta_new.device
++                ).reshape(delta_new.shape)
++
+             # scale
+             scale_new = x_s_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
+ 
