@@ -75,6 +75,15 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 - **NeuroSync 가중치**(게이트): [convaitech/NEUROSYNC](https://huggingface.co/convaitech/NEUROSYNC) 약관 동의 + `HF_TOKEN` 설정 → 첫 발화 때 자동 다운로드. 없으면 음량 기반 폴백으로 동작.
 - **NVIDIA A2F-3D 엔진**(선택): C++/TensorRT 빌드 필요 — [`Audio2Face-3D-SDK/_project_build/SETUP.md`](https://github.com/NVIDIA/Audio2Face-3D-SDK) 절차 참조 (WSL2 + RTX 4070 Ti에서 검증).
 - **JoyVASA 영상 모드**(선택): 사진풍 인물 그림을 통째로 애니메이션하는 별도 모드 (`/`).
+- **TRT 렌더 가속**(선택, 1.4배): [`trt_warp.py`](trt_warp.py) 참조. `~/FasterLivePortrait/checkpoints/liveportrait_onnx/warping_spade-fix.trt` 가 있으면 자동으로 켜진다.
+  ```bash
+  uv pip install --python .venv/bin/python --index-url https://pypi.nvidia.com \
+      --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match \
+      --no-deps tensorrt-libs==8.6.1 tensorrt-bindings==8.6.1
+  ```
+  `--no-deps` 는 일부러다 — 의존성을 따라가면 cudnn 9 가 깔려 토치의 cudnn 8.9 와 충돌한다.
+  엔진은 **GPU 아키텍처 종속**(sm_89 에서 생성)이라 다른 GPU 로 옮기면 FasterLivePortrait 의
+  `scripts/all_onnx2trt.sh` 로 다시 뽑아야 한다. 없으면 조용히 torch 경로로 돈다.
 - 상시 실행: systemd 유저 서비스로 등록해 자동 기동 가능. HF Spaces 배포용 `Dockerfile` / `requirements-space.txt` 포함 (Docker Space는 HF PRO 필요).
 - **로컬 풀버전을 남에게 보여주기**: `bash tools/share_tunnel.sh` → Cloudflare quick tunnel로 공개 URL 생성 (무료·계정 불필요). 대화·A2F 포함 전 기능이 그대로 공개된다. 내 PC가 켜져 있을 때만 접속되고 실행마다 URL이 바뀐다. 인증이 없으니 아는 사람에게만 공유.
 
@@ -85,6 +94,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 ├─ blendshape_source.py    # 음성 → ARKit 52ch (NeuroSync, 폴백 내장)
 ├─ a2f_source.py           # 음성 → ARKit 52ch (NVIDIA A2F-3D)
 ├─ character_builder.py    # 그림 → 퍼펫 캐릭터 (눈/입 분리·베이스 생성)
+├─ trt_warp.py             # 영상 렌더의 warping+spade 만 TensorRT 로 대체 (있으면 자동, 1.4배)
 ├─ static/avatar_core.js   # 세 페이지 공유 렌더 코어 (docs/avatar_core.js 는 복사본 — 수정 후 `cp static/avatar_core.js docs/` 로 동기화)
 ├─ static/puppet.html      # 실시간 퍼펫 렌더러 + 제어 패널
 ├─ docs/                   # GitHub Pages 정적 데모 (서버리스 버전)

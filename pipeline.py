@@ -1,6 +1,7 @@
 """JoyVASA 인프로세스 추론 래퍼 + 깜빡임·표정 스케줄 주입.
 
 모델은 첫 generate() 호출 시 1회 로드되어 GPU에 상주한다 (재로드 없음).
+렌더의 warping+spade 는 FasterLivePortrait TRT 엔진이 있으면 그쪽으로 넘긴다 (trt_warp.py).
 깜빡임은 JoyVASA 렌더 루프의 eye retargeting 분기에 프레임별 target
 eyes-open ratio 스케줄을 주입해 구현 (JoyVASA/src/live_portrait_wmg_pipeline.py 참조).
 """
@@ -8,6 +9,8 @@ import inspect
 import subprocess
 import sys
 from pathlib import Path
+
+import trt_warp
 
 ROOT = Path(__file__).parent
 JOYVASA = ROOT / "JoyVASA"
@@ -120,6 +123,7 @@ class AvatarPipeline:
         # 이후 8.7s 오디오 기준 8.9s = 거의 실시간(1.0x). 오디오 길이가 달라져도 재컴파일 없음
         # (2.2s→2.6s, 12.5s→12.4s 실측). 화질 차이는 디퓨전 자체 변동(같은 설정 재실행 30.9~42.1dB)
         # 범위 안. triton 2.2.0 필요 — 없으면 ImportError 나므로 False 로.
+        # TRT 엔진이 있으면 컴파일 대상(warping/spade)이 통째로 대체되므로 자동으로 꺼진다.
         self.compile = True
         self._pipe = None
         self._ArgumentConfig = None
@@ -141,13 +145,26 @@ class AvatarPipeline:
                 f"JoyVASA 패치가 적용돼 있지 않습니다 (누락: {', '.join(_missing)}). "
                 "patches/README.md 참조 — cd JoyVASA && git apply ../patches/joyvasa_inject.patch")
 
+        # torch.compile 이 손대는 건 warping_module·spade_generator 둘뿐이라
+        # (live_portrait_wmg_wrapper.py:74-75) TRT 로 갈아끼우면 컴파일할 게 없다.
+        use_trt = trt_warp.available()
         base = ArgumentConfig(animation_mode=self.animation_mode,
                               flag_do_crop=self.do_crop, cfg_scale=self.cfg_scale,
                               flag_use_half_precision=self.half,
-                              flag_do_torch_compile=self.compile)
+                              flag_do_torch_compile=self.compile and not use_trt)
         self._pipe = LivePortraitPipeline(
             inference_cfg=_partial_fields(InferenceConfig, base.__dict__),
             crop_cfg=_partial_fields(CropConfig, base.__dict__))
+        if use_trt:
+            import torch
+            lw = self._pipe.live_portrait_wrapper
+            lw.warp_decode = trt_warp.TrtWarpDecode()
+            lw.warping_module = lw.spade_generator = None   # TRT 와 중복 상주 = VRAM 낭비
+            torch.cuda.empty_cache()
+            print(f"[pipeline] warping+spade → TRT ({trt_warp.ENGINE.name})")
+        else:
+            # 조용히 느려지지 않게 남긴다 — 엔진 경로가 어긋나면 증상이 "왜 느리지" 뿐이다.
+            print(f"[pipeline] TRT 엔진 없음 → torch 경로 (1.4배 느림): {trt_warp.ENGINE}")
         self._ArgumentConfig = ArgumentConfig
         return self._pipe
 
