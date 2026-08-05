@@ -4,6 +4,9 @@
 같은 입출력(feature_3d, kp_source, kp_driving → 1x3x512x512)을 가진 TRT 엔진이
 15.5ms/frame 으로 torch.compile+fp16 의 24.6ms/frame 보다 1.6배 빠르다.
 
+배치는 답이 아니다 — torch 경로에서 batch 8 을 재보니 36.0ms/frame 으로 batch 1(24.6ms)보다
+느렸다. 512 디코더가 이미 compute-bound라 겹칠 여유가 없다. 다시 시도하지 말 것.
+
 **여기만 바꾼다.** 모션 생성(JoyVASA 디퓨전)과 감정·깜빡임 주입은 delta_new 계산 단계라
 손대지 않는다 — patches/joyvasa_inject.patch 의 두 hunk 는 그대로 유효하다.
 
