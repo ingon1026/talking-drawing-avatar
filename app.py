@@ -90,6 +90,13 @@ def _english_heavy(text: str) -> bool:
     return en > ko
 
 
+def _resolve_voice(text: str, voice: str) -> str:
+    """실제로 합성에 쓰일 음성. 한영혼합에서도 스왑되므로 호출측이 이걸 알아야 한다 —
+    예전엔 tts_to_wav 안에서만 바꿔서, _base_f0 가 스왑된 음성의 오디오를 원래 음성 키로
+    캐시할 수 있었다(그 뒤 한국어 요청 전부가 틀린 기준 F0 를 씀)."""
+    return MULTI_VOICE if "Multilingual" not in voice and _english_heavy(text) else voice
+
+
 async def _synth_mp3(text: str, voice: str, mp3: Path, kw: dict) -> list[dict]:
     """mp3 를 쓰면서 WordBoundary 마크를 모은다. offset 은 100ns 단위 → 초로 변환."""
     marks = []
@@ -106,8 +113,7 @@ async def _synth_mp3(text: str, voice: str, mp3: Path, kw: dict) -> list[dict]:
 def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody=None) -> list[dict]:
     """텍스트 → wav(16k mono). 반환값은 단어 경계 마크 — 문장 시작 시각 계산에 쓴다."""
     # 영어 위주인데 한국어전용 음성을 골랐으면 멀티링구얼로 자동 스왑(립싱크는 언어 무관).
-    if "Multilingual" not in voice and _english_heavy(text):
-        voice = MULTI_VOICE
+    voice = _resolve_voice(text, voice)
     mp3 = wav.with_suffix(".mp3")
     # edge-tts 는 rate/volume 은 퍼센트, pitch 는 Hz 문자열(부호 필수)을 받는다.
     p = prosody or {}
@@ -131,6 +137,11 @@ def _base_f0(voice: str, wav: Path) -> float:
     edge-tts 의 pitch 는 **비율이 아니라 절대 Hz 오프셋**(`+16Hz`)이라, 그걸 리샘플
     배율로 바꾸려면 기준 F0 가 필요하다. 음성별 상수표를 박으면 음성이 바뀔 때 조용히
     틀리므로 실제 오디오에서 뽑는다. pyin 은 162ms 지만 음성당 1회라 요청 비용은 0.
+
+    ponytail: 그 음성으로 처음 합성한 **한 문장**으로 정하고 프로세스 내내 쓴다. 같은
+    음성도 문장에 따라 중앙 F0 가 155~172Hz 로 11% 흔들려서 배율 q 에 그대로 들어간다.
+    첫 문장이 짧거나 특이하면 그 값이 굳는다 — 거슬리면 처음 N 개를 평균 내거나 2초
+    미만 샘플은 버리고 다시 재도록 고칠 것.
     """
     if voice not in _VOICE_F0:
         import librosa
@@ -229,7 +240,9 @@ def run_video_job(job_id: str, job: dict):
         if lab:
             emotion, intensity = lab["emo"], lab["intensity"]
             row = (req.prosody_table or {}).get(emotion) or {}
-            _apply_prosody(wav, {k: v * intensity for k, v in row.items()}, req.voice)
+            # 요청 음성이 아니라 **실제 합성에 쓰인** 음성으로 F0 를 잡아야 한다.
+            _apply_prosody(wav, {k: v * intensity for k, v in row.items()},
+                           _resolve_voice(req.text, req.voice))
         job["emotion"] = emotion    # 클라이언트가 표정 상태를 맞출 수 있게 알려준다
     else:
         # 감정을 이미 안다(수동 버튼 / 감정 자동 꺼짐) — 겹칠 게 없으니 SSML 이 낫다.
