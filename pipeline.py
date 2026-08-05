@@ -151,6 +151,16 @@ class _StreamEncoder:
         self.p.stdin.close()
         if self.p.wait() != 0:
             raise RuntimeError("ffmpeg 인코딩 실패")
+        # 조각 포맷은 재생 시작은 빠르지만 플레이어에 따라 길이를 못 읽거나 아예 못 연다.
+        # 저장 버튼이 주는 파일은 어디서나 열려야 하므로 재인코딩 없이 다시 담는다(~50ms).
+        # 이미 스트림을 읽고 있는 쪽은 rename 뒤에도 옛 inode 를 계속 읽으므로 안전하다.
+        tmp = self.out.with_suffix(".fix.mp4")
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(self.out),
+                            "-c", "copy", "-movflags", "+faststart", str(tmp)])
+        if r.returncode == 0 and tmp.exists():
+            tmp.replace(self.out)
+        else:
+            tmp.unlink(missing_ok=True)
 
 
 class AvatarPipeline:
