@@ -8,7 +8,7 @@ import json
 import statistics
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 CANVAS = 512
 INK_MAX = 300   # r+g+b 합이 이 미만이면 '획'. avatar_core.js 의 INK_MAX 와 같은 값이어야
@@ -114,7 +114,25 @@ def _fill_skin(img, box, ring=6):
             if sum(px[x, y]) >= INK_MAX:
                 skin.append(px[x, y])
     fill = _median_rgb(skin) if skin else _border_median(img, box)
-    ImageDraw.Draw(img).rectangle((x0, y0, x1 - 1, y1 - 1), fill=fill)
+    ImageDraw.Draw(img).bitmap((0, 0), _ink_mask(img, box), fill=fill)
+
+
+def _ink_mask(img, box, grow=3):
+    """상자 안 잉크를 grow 픽셀 부풀린 마스크. 지우는 모양을 사각형이 아니라 눈 모양으로.
+
+    사각형으로 지우면 눈꺼풀이 내려와 그 자리가 드러날 때 각진 경계가 그대로 보인다.
+    잉크(눈)를 감싸는 모양으로 지우면 드러나는 건 눈 윤곽 안쪽뿐이라 경계가 안 읽힌다.
+    """
+    x0, y0, x1, y1 = box
+    m = Image.new("1", img.size, 0)
+    mp = m.load()
+    px = img.convert("RGB").load()
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            if sum(px[x, y]) < INK_MAX:
+                mp[x, y] = 1
+    # 팽창 — 잉크 픽셀 주변 grow 만큼 함께 지운다(안티에일리어싱 가장자리까지)
+    return m.filter(ImageFilter.MaxFilter(grow * 2 + 1))
 
 
 def _largest_blob_box(px, box):
