@@ -145,6 +145,19 @@ class _StreamEncoder:
                 str(self.out)], stdin=subprocess.PIPE)
         self.p.stdin.write(frame.tobytes())
 
+    def abort(self):
+        """예외 경로 — ffmpeg 를 죽이고 반쯤 쓰인 파일을 지운다.
+
+        close() 를 대신 부르면 안 된다: 그쪽은 정상 종료를 기다렸다가 remux 까지 하는데,
+        렌더가 중간에 죽었으면 남은 건 잘린 영상이라 저장 버튼에 걸릴 값어치가 없다.
+        """
+        if self.p is None:
+            return
+        self.p.kill()
+        self.p.stdin.close()
+        self.p.wait()
+        self.out.unlink(missing_ok=True)
+
     def close(self):
         if self.p is None:
             raise RuntimeError("렌더된 프레임이 하나도 없습니다 (execute 가 parse_output 을 안 불렀다)")
@@ -197,6 +210,15 @@ class AvatarPipeline:
             raise RuntimeError(
                 f"JoyVASA 패치가 적용돼 있지 않습니다 (누락: {', '.join(_missing)}). "
                 "patches/README.md 참조 — cd JoyVASA && git apply ../patches/joyvasa_inject.patch")
+        # generate() 가 P.images2video 를 무력화해 일괄 인코딩을 끈다. 상류가 이 호출을
+        # 없애거나 이름을 바꾸면 몽키패치가 조용히 헛돌고 — 증상은 "왜 느리지" + output/ 에
+        # 임시 mp4 누적뿐이다. (모듈 전역이 아니라 `video.images2video` 같은 속성 접근으로
+        # 바뀌는 경우까지는 이 문자열 검사로 못 잡는다.)
+        if "images2video" not in _src:
+            raise RuntimeError(
+                "상류 execute 에 images2video 호출이 없습니다 — 스트리밍 인코더의 "
+                "일괄 인코딩 무력화(P.images2video 몽키패치)가 헛돕니다. pipeline.py 의 "
+                "generate() 를 상류 변경에 맞춰 고치세요.")
 
         # torch.compile 이 손대는 건 warping_module·spade_generator 둘뿐이라
         # (live_portrait_wmg_wrapper.py:74-75) TRT 로 갈아끼우면 컴파일할 게 없다.
@@ -255,13 +277,26 @@ class AvatarPipeline:
         if inf.flag_pasteback and inf.flag_do_crop and inf.flag_stitching:
             raise RuntimeError("pasteback 경로는 parse_output 뒤에 프레임을 또 합성한다 — "
                                "스트리밍 인코더가 합성 전 프레임을 내보내므로 지원하지 않는다.")
+        import torch   # generate() 스코프에는 없다 — _load() 의 것은 그 함수 지역이다
         import src.live_portrait_wmg_pipeline as P
         lw = pipe.live_portrait_wrapper
         enc, orig = _StreamEncoder(out_mp4, wav), lw.parse_output
         keep = (P.images2video, P.add_audio_to_video)
 
         def parse_and_stream(out):
-            f = orig(out)
+            # 상류 parse_output 을 부르지 않고 같은 일을 GPU 에서 한다. 상류는 fp32 CHW 3MB 를
+            # 통째로 내린 뒤 numpy 로 후처리하는데, np.transpose 가 만든 비연속 뷰가 clip·astype
+            # (둘 다 order='K')을 지나 그대로 남아 인코더의 tobytes() 가 786KB 를 스트라이드로
+            # 긁어모은다. 실측 3.75ms/frame → 0.22ms/frame (118프레임 기준 417ms 절감).
+            #
+            # in-place(mul_·clamp_) 금지: TrtWarpDecode 의 out 은 매 프레임 재사용하는
+            # 사전할당 버퍼라 직접 고치면 다음 프레임이 깨진다. torch 폴백 경로는 매번 새
+            # 텐서를 주므로 그쪽으로 테스트하면 이 함정이 안 잡힌다.
+            #
+            # 상류와 바이트 동일함을 확인했다(범위 밖·경계값 포함). 상류는 clip(0,1) 후 ×255,
+            # 여기는 ×255 후 clamp(0,255) — 순서가 달라도 결과가 같다.
+            f = (out.mul(255).clamp(0, 255).to(torch.uint8)
+                    .permute(0, 2, 3, 1).contiguous().cpu().numpy())   # 1xHxWx3 uint8
             enc(f[0])
             return f
 
@@ -269,6 +304,11 @@ class AvatarPipeline:
         P.images2video = P.add_audio_to_video = lambda *a, **k: None
         try:
             pipe.execute(args)      # 반환 경로는 우리가 안 쓴다 — 파일은 enc 가 이미 썼다
+        except BaseException:
+            # close() 는 정상 종료 대기 + remux 라 여기서 부르면 안 된다. 안 부르고 넘기면
+            # ffmpeg 자식이 stdin 열린 채 남아 실패한 잡마다 쌓인다(상시 서비스라 누적된다).
+            enc.abort()
+            raise
         finally:
             lw.parse_output = orig
             P.images2video, P.add_audio_to_video = keep

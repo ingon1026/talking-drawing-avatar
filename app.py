@@ -226,11 +226,13 @@ def run_video_job(job_id: str, job: dict):
                 labs = llm_source.classify_cached(tuple(s)) if s else None
                 if labs:
                     got["lab"] = labs[0]
-            except Exception:
+            except Exception as e:
                 # 판정 실패는 중립으로 진행한다 — 영상 자체는 나와야 한다.
                 # ponytail: 예전 클라이언트는 여기서 규칙 폴백(inferEmotion)을 탔지만,
                 # 실측 8문장 중 7문장이 기권(발화한 1문장만 정답)이라 사실상 중립과 같다.
-                pass
+                # 다만 조용히 넘기지는 않는다 — 전이 의존성(requests 등)이 빠지면 증상이
+                # "감정이 항상 중립" 뿐이라 원인을 못 찾는다. _llm() 이 존재하는 이유와 같다.
+                print(f"[video] 감정 판정 건너뜀 ({type(e).__name__}: {e}) — 중립으로 진행")
 
         th = threading.Thread(target=classify)
         th.start()
@@ -240,6 +242,11 @@ def run_video_job(job_id: str, job: dict):
         if lab:
             emotion, intensity = lab["emo"], lab["intensity"]
             row = (req.prosody_table or {}).get(emotion) or {}
+            if not row:
+                # 감정은 판정됐는데 목소리만 평평한 영상이 나온다 — 에러도 안 나서
+                # 무증상이다. 테이블은 클라이언트가 요청마다 실어 보내므로(단일 출처가
+                # avatar_core.js 의 VOICE_STYLE) 여기서 빠지면 그쪽 변경을 의심한다.
+                print(f"[video] prosody_table 에 '{emotion}' 없음 — 목소리는 중립으로 나갑니다")
             # 요청 음성이 아니라 **실제 합성에 쓰인** 음성으로 F0 를 잡아야 한다.
             _apply_prosody(wav, {k: v * intensity for k, v in row.items()},
                            _resolve_voice(req.text, req.voice))

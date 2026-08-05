@@ -17,6 +17,10 @@ import ctypes
 import os
 from pathlib import Path
 
+# 이 파일은 TRT 8 레거시 바인딩 API(num_bindings·get_binding_name·execute_async_v2)를 쓴다.
+# 셋 다 TRT 8.5 에서 deprecated, TRT 10 에서 제거됐다 — README 가 핀한
+# tensorrt-bindings==8.6.1 / tensorrt-libs==8.6.1 을 올리면 여기부터 깨진다.
+# (같은 엔진을 읽는 FasterLivePortrait 의 src/models/predictor.py 는 8.5+ API 를 쓴다.)
 FLP = Path(os.environ.get("FLP_ROOT", Path.home() / "FasterLivePortrait"))
 CK = FLP / "checkpoints" / "liveportrait_onnx"
 ENGINE = CK / "warping_spade-fix.trt"
