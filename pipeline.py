@@ -16,7 +16,6 @@ ROOT = Path(__file__).parent
 JOYVASA = ROOT / "JoyVASA"
 sys.path.insert(0, str(JOYVASA))
 
-IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 FPS = 25  # JoyVASA inference_config output_fps 기본값
 
 # 감정 → LivePortrait 표정 벡터(exp 21×3) 델타.
@@ -70,17 +69,6 @@ def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
     for i, ax, c in SMILE:
         d[i, ax] += smile * c
     return d
-
-
-SAMPLE_FALLBACK = JOYVASA / "assets" / "examples" / "imgs" / "joyvasa_003.png"
-
-
-def find_avatar_image() -> Path | None:
-    """face 폴더 최상위의 그림 파일 우선, 없으면 JoyVASA 샘플로 폴백."""
-    for p in sorted(ROOT.iterdir()):
-        if p.suffix.lower() in IMG_EXTS:
-            return p
-    return SAMPLE_FALLBACK if SAMPLE_FALLBACK.exists() else None
 
 
 def wav_duration(wav: Path) -> float:
@@ -249,12 +237,14 @@ class AvatarPipeline:
                  image: Path = None, do_crop: bool = None) -> Path:
         """wav + 그림 → 립싱크 mp4 (blink_interval초마다 강제 깜빡임, 0 = 주입 없음).
 
-        image: 지정하면 그 사진으로 애니메이션(실사 업로드용), 없으면 폴더 기본 이미지.
+        image: **필수.** 예전엔 없으면 리포 최상위를 알파벳 순으로 훑어 첫 이미지를 썼는데,
+            아무도 고르지 않은 파일이 얼굴이 됐다 — 실제로 테스트 픽스처 test_1.png(돼지
+            낙서)가 잡혀서 "/" 로 만든 영상이 전부 돼지였다. 얼굴은 호출측이 정한다.
         do_crop: 실사 얼굴이면 True(InsightFace 크롭). 미지정 시 인스턴스 기본값.
         """
-        img = Path(image) if image else find_avatar_image()
-        if img is None or not Path(img).exists():
-            raise RuntimeError("그림/사진 파일이 없습니다.")
+        img = Path(image) if image else None
+        if img is None or not img.exists():
+            raise RuntimeError(f"애니메이션할 그림/사진이 지정되지 않았습니다: {image!r}")
 
         pipe = self._pipe or self._load()
 

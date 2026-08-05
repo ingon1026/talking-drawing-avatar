@@ -50,7 +50,9 @@
   <h1>🎨 말하는 사진·그림 <a href="/puppet" style="color:#9a9ab0;font-size:.85rem;text-decoration:none;float:right">실시간 퍼펫 모드 →</a></h1>
 
   <div class="stage" id="stage" title="사진을 끌어다 놓아도 됩니다">
-    <img id="avatar" src="/api/avatar" alt="" onerror="this.style.display='none'">
+    <!-- src 는 업로드할 때 채운다. 예전엔 /api/avatar 로 "서버 폴더의 아무 이미지"를
+         띄웠는데, 아무도 고르지 않은 파일(테스트 픽스처 돼지)이 얼굴이 됐다. -->
+    <img id="avatar" alt="" style="display:none">
     <video id="player" style="display:none" playsinline></video>
     <div id="placeholder" class="placeholder" style="display:none"></div>
   </div>
@@ -89,7 +91,7 @@
 const $ = id => document.getElementById(id);
 const statusMsg = { queued: "대기 중…", tts: "음성 생성 중…", animating: "얼굴 애니메이션 생성 중… (수십 초 걸릴 수 있어요)" };
 
-// 업로드한 사진(dataURL). 있으면 이 사진으로, 없으면 서버 폴더 기본 이미지로 생성.
+// 업로드한 사진(dataURL). **이게 없으면 만들 게 없다** — 서버에 기본 얼굴 같은 건 없다.
 let uploadedPhoto = null;
 function acceptPhoto(file) {
   if (!file || !file.type.startsWith("image/")) return;
@@ -100,6 +102,7 @@ function acceptPhoto(file) {
     $("avatar").style.display = "";
     $("player").style.display = "none";
     $("placeholder").style.display = "none";
+    $("send").disabled = false;
     setStatus("사진 준비됨 — 문장을 입력하고 ‘말하기’를 누르세요. (실사 사진이 가장 잘 됩니다)");
   };
   reader.readAsDataURL(file);
@@ -116,17 +119,13 @@ $("strength").oninput = e => $("strengthVal").textContent = Math.round(e.target.
 async function checkHealth() {
   const h = await fetch("/api/health").then(r => r.json());
   const ph = $("placeholder");
-  if (!h.image) {
-    ph.style.display = "flex";
-    ph.textContent = "📷 위 ‘내 사진·그림 올리기’로 사진을 올려보세요.\n실사 얼굴 사진이 가장 잘 됩니다.";
-  } else if (!h.joyvasa_ready) {
-    ph.style.display = "flex";
-    ph.textContent = "모델 셋업 진행 중…";
-    $("avatar").style.display = "";
-  } else {
-    ph.style.display = "none";
-  }
+  ph.style.display = "flex";
+  ph.textContent = h.joyvasa_ready
+    ? "📷 위 ‘내 사진·그림 올리기’로 사진을 올려보세요.\n실사 얼굴 사진이 가장 잘 됩니다."
+    : "모델 셋업 진행 중…";
 }
+// 사진이 없으면 만들 게 없다 — 올릴 때까지 잠근다(acceptPhoto 가 푼다).
+$("send").disabled = true;
 checkHealth();
 
 $("form").onsubmit = async e => {

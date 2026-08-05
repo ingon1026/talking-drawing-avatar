@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from pipeline import AvatarPipeline, find_avatar_image
+from pipeline import AvatarPipeline
 
 ROOT = Path(__file__).parent
 OUT = ROOT / "output"
@@ -51,7 +51,8 @@ class SpeakReq(BaseModel):
     voice: str = DEFAULT_VOICE
     blink_interval: float = 4.0  # 평균 깜빡임 간격(초), 0 = 깜빡임 없음
     blink_strength: float = 1.0  # 0~1
-    image_b64: str | None = None  # 업로드 사진(dataURL/base64). 없으면 폴더 기본 이미지
+    # 얼굴은 둘 중 하나로 **반드시** 지정된다 — 서버가 알아서 고르는 기본 얼굴은 없다.
+    image_b64: str | None = None  # 업로드 사진(dataURL/base64)
     char_id: str | None = None    # 등록 캐릭터 id — 그 캐릭터의 source.png 로 영상 생성
     # 감정 → 목소리 톤 (비율, 0 = 평상시). 클라이언트의 AvatarCore.voiceProsody 산출값.
     # 톤이 바뀐 오디오를 JoyVASA 가 먹으므로 표정·머리 움직임도 그만큼 따라온다.
@@ -370,6 +371,10 @@ def warmup():
 def speak(req: SpeakReq):
     if not req.text.strip():
         raise HTTPException(400, "텍스트가 비어 있습니다.")
+    # 얼굴은 반드시 명시돼야 한다. 잡을 만들어 놓고 워커에서 실패시키면 사용자는
+    # 4초 기다린 끝에 알게 되므로 여기서 즉시 막는다.
+    if not req.char_id and not req.image_b64:
+        raise HTTPException(400, "애니메이션할 사진이나 캐릭터를 먼저 지정해주세요.")
     job_id = uuid.uuid4().hex[:12]
     jobs[job_id] = {"status": "queued", "req": req}
     work_q.put(job_id)
@@ -571,21 +576,14 @@ def stream_video(job_id: str):
 
 @app.get("/api/health")
 def health():
-    img = find_avatar_image()
+    # image 필드는 뺐다 — 서버에 "현재 아바타" 라는 개념이 더 이상 없다. 얼굴은 요청마다
+    # char_id 나 image_b64 로 명시된다(예전엔 리포 최상위를 훑어 첫 이미지를 썼고,
+    # 테스트 픽스처 test_1.png 가 잡혀 "/" 영상이 전부 돼지였다).
     return {
-        "image": img.name if img else None,
         "joyvasa_ready": (ROOT / "JoyVASA").exists(),
         "a2f": (ROOT / "Audio2Face-3D-SDK").exists(),
         "chat": (ROOT / "llm_source.py").exists(),
     }
-
-
-@app.get("/api/avatar")
-def avatar_image():
-    img = find_avatar_image()
-    if img is None:
-        raise HTTPException(404, "그림 파일이 없습니다.")
-    return FileResponse(img)
 
 
 @app.get("/")
