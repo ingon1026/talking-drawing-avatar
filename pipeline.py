@@ -72,6 +72,45 @@ def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
     return d
 
 
+CROSSFADE_S = 0.25   # avatar_core.js followTrack 과 같은 값 — 두 경로가 다르게 보이면 안 된다
+
+
+def emotion_exp_schedule(segments, n_frames: int, fps: int = FPS):
+    """문장별 감정 → **프레임별** 표정 델타 리스트 (전부 중립이면 None).
+
+    segments: [(시작초, 감정, 강도)] — 시작초는 오디오 기준(app.sentence_starts 산출).
+
+    실시간 경로는 문장마다 표정을 바꾸는데 영상은 첫 문장 감정으로 통짜였다. 주입 지점이
+    이미 프레임 단위라(exp_delta_schedule) 스케줄만 채우면 된다 — 새 배관이 필요 없다.
+
+    **목소리 톤은 못 따라온다**: edge-tts 프로소디는 발화 하나에 하나고, 사후 ffmpeg
+    필터도 구간별로 못 건다. 얼굴만 문장을 따라가고 톤은 첫 문장 것으로 남는다.
+    """
+    if not segments:
+        return None
+    import numpy as np
+    zero = np.zeros((21, 3), dtype="float32")
+    starts = [s for s, _, _ in segments]
+    deltas = [emotion_exp_delta(e, i) for _, e, i in segments]
+    if all(d is None for d in deltas):
+        return None
+    deltas = [zero if d is None else d for d in deltas]
+
+    sched, k = [], 0
+    for f in range(n_frames):
+        t = f / fps
+        while k + 1 < len(starts) and t >= starts[k + 1]:
+            k += 1
+        d = deltas[k]
+        # 문장이 바뀌는 순간 표정이 튀지 않게 앞 문장에서 선형으로 넘어온다.
+        gap = t - starts[k]
+        if k > 0 and gap < CROSSFADE_S:
+            a = gap / CROSSFADE_S
+            d = deltas[k - 1] * (1 - a) + d * a
+        sched.append(None if not d.any() else d)
+    return sched
+
+
 def wav_duration(wav: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(wav)],
@@ -290,13 +329,15 @@ class AvatarPipeline:
 
     def generate(self, wav: Path, out_mp4: Path,
                  blink_interval: float = 4.0, blink_strength: float = 1.0,
-                 exp_delta=None,
+                 exp_delta=None, emo_segments=None,
                  image: Path = None, do_crop: bool = None) -> Path:
         """wav + 그림 → 립싱크 mp4 (blink_interval초마다 강제 깜빡임, 0 = 주입 없음).
 
         image: **필수.** 예전엔 없으면 리포 최상위를 알파벳 순으로 훑어 첫 이미지를 썼는데,
             아무도 고르지 않은 파일이 얼굴이 됐다 — 실제로 테스트 픽스처 test_1.png(돼지
             낙서)가 잡혀서 "/" 로 만든 영상이 전부 돼지였다. 얼굴은 호출측이 정한다.
+        emo_segments: [(시작초, 감정, 강도)] — 문장마다 표정이 바뀐다. 앱은 이쪽만 쓴다.
+        exp_delta: (21,3) 상수 델타. tools/exp_index_probe.py 가 인덱스를 실측할 때 쓴다.
         do_crop: 실사 얼굴이면 True(InsightFace 크롭). 미지정 시 인스턴스 기본값.
         """
         img = Path(image) if image else None
@@ -314,8 +355,12 @@ class AvatarPipeline:
             output_dir=str(out_mp4.parent), cfg_scale=self.cfg_scale,
             flag_do_crop=self.do_crop if do_crop is None else do_crop)
         args.eye_ratio_schedule = sched
-        # 표정 델타 — 발화 내내 같은 값(감정은 문장 단위라 프레임마다 바뀌지 않는다).
-        args.exp_delta_schedule = [exp_delta] * n_frames if exp_delta is not None else None
+        # 표정 델타. 문장 단위로 바뀌므로 프레임별 스케줄이다 — 상수 exp_delta 는 인덱스
+        # 실측용이라 n_frames 만큼 펴서 같은 자리에 넣는다.
+        if emo_segments:
+            args.exp_delta_schedule = emotion_exp_schedule(emo_segments, n_frames, FPS)
+        else:
+            args.exp_delta_schedule = [exp_delta] * n_frames if exp_delta is not None else None
 
         # 프레임을 나오는 대로 인코딩한다 — 상류의 끝단 일괄 인코딩은 무력화한다.
         # parse_output 이 렌더 루프에서 프레임당 정확히 한 번, 순서대로 불리는 유일한 지점이라
@@ -372,6 +417,21 @@ if __name__ == "__main__":
     half = make_blink_schedule(100, 2.0, 0.5)
     assert abs(half[51] - 0.15) < 1e-9                   # 강도 0.5 = 반감김
     print("blink schedule self-check OK")
+
+    # 문장별 표정 스케줄 (GPU 불필요)
+    sch = emotion_exp_schedule([(0.0, "joy", 1.0), (2.0, "angry", 1.0)], 100, 25)
+    assert len(sch) == 100
+    joy, angry = emotion_exp_delta("joy", 1.0), emotion_exp_delta("angry", 1.0)
+    assert (sch[10] == joy).all()                                  # 첫 문장 구간
+    assert (sch[99] == angry).all()                                # 두 번째 문장 정착
+    mid = sch[52]                                                  # 2.08s = 전환 중(0.25s 페이드)
+    assert not (mid == joy).all() and not (mid == angry).all(), "크로스페이드가 안 걸렸다"
+    assert emotion_exp_schedule([(0.0, "neutral", 1.0)], 10) is None    # 중립뿐이면 주입 안 함
+    assert emotion_exp_schedule([], 10) is None
+    # 구간이 하나면 예전 동작(통짜)과 같아야 한다
+    one = emotion_exp_schedule([(0.0, "joy", 1.0)], 30)
+    assert all((d == joy).all() for d in one)
+    print("emotion schedule self-check OK")
 
     # 얼굴 검출 판정 (GPU 불필요 — InsightFace 는 CPU 로 돈다)
     assert can_animate(JOYVASA / "assets/examples/imgs/joyvasa_005.png")  # 실사 → 영상 가능

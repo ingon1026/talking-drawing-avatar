@@ -230,6 +230,7 @@ def run_video_job(job_id: str, job: dict):
     job["status"] = "tts"
     wav = OUT / f"{job_id}.wav"
     emotion, intensity = req.emotion, req.intensity
+    segments = None   # [(시작초, 감정, 강도)] — 문장마다 표정이 바뀐다
     if req.auto_emo and not req.emotion:
         # 감정 판정과 TTS 를 동시에 돌린다. 직렬로 두면 판정(≈0.39s)이 끝나야 SSML
         # 프로소디를 정할 수 있어 통째로 대기 시간이다. 중립으로 합성해 두고 판정이
@@ -243,6 +244,7 @@ def run_video_job(job_id: str, job: dict):
                 labs = llm_source.classify_cached(tuple(s)) if s else None
                 if labs:
                     got["lab"] = labs[0]
+                    got["sentences"], got["labs"] = s, labs
             except Exception as e:
                 # 판정 실패는 중립으로 진행한다 — 영상 자체는 나와야 한다.
                 # ponytail: 예전 클라이언트는 여기서 규칙 폴백(inferEmotion)을 탔지만,
@@ -253,11 +255,16 @@ def run_video_job(job_id: str, job: dict):
 
         th = threading.Thread(target=classify)
         th.start()
-        tts_to_wav(req.text, req.voice, wav)      # 중립 프로소디로 즉시 합성
+        marks = tts_to_wav(req.text, req.voice, wav)   # 중립 프로소디로 즉시 합성
         th.join()
         lab = got.get("lab")
         if lab:
             emotion, intensity = lab["emo"], lab["intensity"]
+            # 문장마다 표정을 바꾼다 — 시작 시각은 TTS 단어 마크에서 복원한다.
+            # 목소리 톤은 못 나눈다(프로소디는 발화 하나에 하나) — 아래는 첫 문장 것이다.
+            starts = sentence_starts(got["sentences"], marks)
+            segments = [(t, g["emo"], g["intensity"])
+                        for t, g in zip(starts, got["labs"])]
             row = (req.prosody_table or {}).get(emotion) or {}
             if not row:
                 # 감정은 판정됐는데 목소리만 평평한 영상이 나온다 — 에러도 안 나서
@@ -289,10 +296,10 @@ def run_video_job(job_id: str, job: dict):
     job["status"] = "animating"
     mp4 = OUT / f"{job_id}.mp4"
     try:
-        from pipeline import emotion_exp_delta
+        # 문장별 판정이 없으면(수동 버튼 등) 한 구간짜리 스케줄 = 예전과 같은 통짜 표정.
         pipeline.generate(wav, mp4, blink_interval=req.blink_interval,
                           blink_strength=req.blink_strength, image=img_path, do_crop=do_crop,
-                          exp_delta=emotion_exp_delta(emotion, intensity))
+                          emo_segments=segments or [(0.0, emotion, intensity)])
     finally:
         # 업로드 임시본만 정리한다 — 캐릭터 source.png 는 영구 자산이라 건드리지 않는다.
         if img_path and img_path.exists() and img_path.parent.name == "uploads":
