@@ -417,7 +417,7 @@ async function speakVideo(text, emotion) {
   // true 로 두면 hold 가 영구 1 이 되어 followTrack 이 죽고, 캐릭터를 바꿔도 안 풀린다.
   if (seg) emo.setEmotion(seg.emo, seg.intensity, false);
   const pr = seg ? AvatarCore.voiceProsody(seg.emo, seg.intensity) : {};
-  setStatus("영상 만드는 중… (4~5초)");
+  setStatus("영상 준비 중…");
   $("saveVid").hidden = true;
   const r = await fetch("/api/speak", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -430,19 +430,23 @@ async function speakVideo(text, emotion) {
   });
   if (!r.ok) throw new Error("영상 생성 요청 실패");
   const { job_id } = await r.json();
+  // 완성을 기다리지 않고 스트림에 붙는다 — 서버가 프래그먼트 mp4 를 자라는 대로 흘려서
+  // 렌더가 끝나기 전에 재생이 시작된다(체감 대기 3.1초 → 1초대).
+  const v = $("vid");
+  v.src = `/api/stream/${job_id}`;
+  v.onplaying = () => setStatus("");
+  $("stage2d").style.display = "none";
+  $("stageVid").style.display = "";
+  v.play().catch(() => {});
   for (let i = 0; i < 150; i++) {
     const j = await fetch(`/api/jobs/${job_id}`).then(x => x.json());
     if (j.status === "done") {
-      const v = $("vid");
-      v.src = j.video_url;
-      $("stage2d").style.display = "none";
-      $("stageVid").style.display = "";
-      // 서버는 생성물을 24시간 뒤 지운다(purge_old_media) — 남기려면 여기서 받아야 한다.
+      // 저장은 완성본 파일로 — 스트림 URL 은 chunked 라 다운로드에 안 맞는다.
+      // 서버는 24시간 뒤 지운다(purge_old_media).
       const a = $("saveVid"), name = $("character").selectedOptions[0].text;
       a.href = j.video_url;
       a.download = `${name}_${text.slice(0, 12)}.mp4`.replace(/[\\/:*?"<>|]/g, "_");
       a.hidden = false;
-      await v.play().catch(() => {});
       return;
     }
     if (j.status === "error") throw new Error(j.error || "영상 생성 실패");

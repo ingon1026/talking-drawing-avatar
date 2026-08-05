@@ -110,6 +110,49 @@ def _partial_fields(cls, kwargs):
     return cls(**{k: v for k, v in kwargs.items() if hasattr(cls, k)})
 
 
+class _StreamEncoder:
+    """렌더된 프레임을 나오는 즉시 ffmpeg 에 흘려보낸다.
+
+    상류는 프레임을 전부 메모리에 모았다가 끝나고 인코딩(0.21s) + 오디오 먹싱(0.21s) 한다.
+    그 0.42s 도 아깝지만 진짜 문제는 **다 만들 때까지 재생을 시작조차 못 한다**는 것이다.
+    프래그먼트 mp4(`frag_keyframe+empty_moov`)로 쓰면 moov 가 맨 앞에 있어 파일이 자라는
+    중에도 브라우저가 재생할 수 있다 — 3.3초 대기가 1초대 체감으로 줄어든다.
+
+    프레임 크기는 첫 프레임을 봐야 알아서 ffmpeg 을 그때 띄운다.
+    """
+
+    def __init__(self, out_mp4: Path, wav: Path, fps: int = FPS):
+        self.out, self.wav, self.fps, self.p = Path(out_mp4), Path(wav), fps, None
+
+    def __call__(self, frame):
+        """frame: HxWx3 uint8 (RGB)"""
+        if self.p is None:
+            h, w = frame.shape[:2]
+            self.p = subprocess.Popen([
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
+                "-r", str(self.fps), "-i", "-",
+                "-i", str(self.wav),
+                # zerolatency = b프레임·lookahead 없음, g=25 = 1초마다 키프레임.
+                # 둘 다 첫 조각이 빨리 떨어지게 하는 설정이다.
+                "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                "-crf", "18", "-g", str(self.fps), "-pix_fmt", "yuv420p", "-c:a", "aac",
+                # -shortest 는 쓰면 안 된다: 오디오가 프레임보다 먼저 끝나면 ffmpeg 이
+                # 그 자리에서 종료해 남은 프레임 write 가 Broken pipe 로 죽는다(실측).
+                # 상류 add_audio_to_video 도 안 쓴다 — 길이는 max(영상, 오디오).
+                "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                "-frag_duration", "200000", "-flush_packets", "1",
+                str(self.out)], stdin=subprocess.PIPE)
+        self.p.stdin.write(frame.tobytes())
+
+    def close(self):
+        if self.p is None:
+            raise RuntimeError("렌더된 프레임이 하나도 없습니다 (execute 가 parse_output 을 안 불렀다)")
+        self.p.stdin.close()
+        if self.p.wait() != 0:
+            raise RuntimeError("ffmpeg 인코딩 실패")
+
+
 class AvatarPipeline:
     def __init__(self):
         self.animation_mode = "human"  # 손그림 검출 실패 시 "animal" 폴백
@@ -195,11 +238,31 @@ class AvatarPipeline:
         # 표정 델타 — 발화 내내 같은 값(감정은 문장 단위라 프레임마다 바뀌지 않는다).
         args.exp_delta_schedule = [exp_delta] * n_frames if exp_delta is not None else None
 
-        final = Path(pipe.execute(args))
-        temp = final.with_name(final.stem + "_temp.mp4")
-        if temp.exists():
-            temp.unlink()
-        final.rename(out_mp4)
+        # 프레임을 나오는 대로 인코딩한다 — 상류의 끝단 일괄 인코딩은 무력화한다.
+        # parse_output 이 렌더 루프에서 프레임당 정확히 한 번, 순서대로 불리는 유일한 지점이라
+        # JoyVASA 패치를 늘리지 않고 여기에 붙는다.
+        inf = pipe.live_portrait_wrapper.inference_cfg
+        if inf.flag_pasteback and inf.flag_do_crop and inf.flag_stitching:
+            raise RuntimeError("pasteback 경로는 parse_output 뒤에 프레임을 또 합성한다 — "
+                               "스트리밍 인코더가 합성 전 프레임을 내보내므로 지원하지 않는다.")
+        import src.live_portrait_wmg_pipeline as P
+        lw = pipe.live_portrait_wrapper
+        enc, orig = _StreamEncoder(out_mp4, wav), lw.parse_output
+        keep = (P.images2video, P.add_audio_to_video)
+
+        def parse_and_stream(out):
+            f = orig(out)
+            enc(f[0])
+            return f
+
+        lw.parse_output = parse_and_stream
+        P.images2video = P.add_audio_to_video = lambda *a, **k: None
+        try:
+            pipe.execute(args)      # 반환 경로는 우리가 안 쓴다 — 파일은 enc 가 이미 썼다
+        finally:
+            lw.parse_output = orig
+            P.images2video, P.add_audio_to_video = keep
+        enc.close()
         return out_mp4
 
 

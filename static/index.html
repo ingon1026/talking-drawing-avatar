@@ -155,12 +155,14 @@ $("form").onsubmit = async e => {
 };
 
 async function poll(jobId) {
+  // 완성을 기다리지 않고 스트림에 붙는다 — 서버가 프래그먼트 mp4 를 자라는 대로 흘린다.
+  play(`/api/stream/${jobId}`);
   while (true) {
     const job = await fetch(`/api/jobs/${jobId}`).then(r => r.json());
-    if (job.status === "done") { play(job.video_url); setStatus(""); return; }
+    if (job.status === "done") { saveLink(job.video_url); setStatus(""); return; }
     if (job.status === "error") { setStatus(job.error, true); return; }
     setStatus(statusMsg[job.status] || job.status);
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 500));
   }
 }
 
@@ -169,9 +171,13 @@ function play(url) {
   $("avatar").style.display = "none";
   v.style.display = "";
   v.src = url;
-  v.play();
+  v.play().catch(() => {});
   v.onended = () => { v.style.display = "none"; $("avatar").style.display = ""; };
-  // 서버는 생성물을 24시간 뒤 지운다(purge_old_media) — 남기려면 여기서 받아야 한다.
+}
+
+function saveLink(url) {
+  // 저장은 완성본 파일로 — 스트림 URL 은 chunked 라 다운로드에 안 맞는다.
+  // 서버는 24시간 뒤 지운다(purge_old_media).
   const a = $("saveVid");
   a.href = url;
   a.download = `말하는그림_${$("text").value.trim().slice(0, 12)}.mp4`.replace(/[\\/:*?"<>|]/g, "_");
