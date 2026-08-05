@@ -89,6 +89,7 @@ class AvatarPipeline:
 
     def generate(self, wav: Path, out_mp4: Path,
                  blink_interval: float = 4.0, blink_strength: float = 1.0,
+                 exp_delta=None,
                  image: Path = None, do_crop: bool = None) -> Path:
         """wav + 그림 → 립싱크 mp4 (blink_interval초마다 강제 깜빡임, 0 = 주입 없음).
 
@@ -110,6 +111,8 @@ class AvatarPipeline:
             output_dir=str(out_mp4.parent), cfg_scale=self.cfg_scale,
             flag_do_crop=self.do_crop if do_crop is None else do_crop)
         args.eye_ratio_schedule = sched
+        # 표정 델타 — 발화 내내 같은 값(감정은 문장 단위라 프레임마다 바뀌지 않는다).
+        args.exp_delta_schedule = [exp_delta] * n_frames if exp_delta is not None else None
 
         final = Path(pipe.execute(args))
         temp = final.with_name(final.stem + "_temp.mp4")
