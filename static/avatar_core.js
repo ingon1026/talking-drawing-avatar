@@ -495,27 +495,27 @@ window.AvatarCore = (() => {
   // 원본 입술을 위/아래 두 장으로 갈라 아랫입술만 내린다. 그 사이에 구강이 드러난다.
   // 원본을 그대로 두면 벌릴 틈이 없고(그림에 입 안쪽이 없다), 구강을 통째로 얹으면
   // 입술을 덮어버린다 — 둘 다 실측으로 확인하고 이 구조로 왔다.
+  // 원본 입술만 변형한다 — 구강은 그리지 않는다.
+  //
+  // 다문 입 그림에는 벌어진 입의 픽셀이 아예 없다. 그 자리를 채우려면 없는 걸 만들어야
+  // 하고, 만든 구강은 어떤 색·모양을 골라도 원본 화풍과 겉돈다(타원·사각형 둘 다 실측).
+  // 그래서 입을 "벌리지" 않고 입술 자체를 늘였다 오므렸다 한다 — 모든 픽셀이 원본이다.
+  // 만화 표현에서도 입을 안 벌리고 입술만 움직이는 립싱크는 흔하다.
   function drawSplitLips(ctx, parts, W, manifest, jawDy) {
-    const up = parts.mouth_upper, lo = parts.mouth_lower;
-    if (!up || !lo) return false;
+    const lips = parts.mouth_lips;
+    if (!lips) return false;
     const box = manifest.mouthBox || [0, 0, 0, 0];
-    const lipY = manifest.lipSplit || 0;
-    // 벌림 폭. 입술 두께(10px 안팎)보다 크게 벌리면 만화 얼굴에서 과하게 읽힌다.
-    const open = W("jawopen") * 22 + avgLR(W, "mouthlowerdown") * 5;
-    ctx.drawImage(up, 0, jawDy);
-    if (open > 1) {
-      // 타원 — 사각형으로 채우면 입꼬리 밖까지 각지게 드러난다. 입꼬리는 안 벌어지므로
-      // 폭을 입 상자보다 좁게 잡고 열릴수록 조금씩 넓힌다.
-      const cx = (box[0] + box[2]) / 2;
-      // 가로로 넓게, 세로는 벌어진 틈을 꽉 채운다. 세로를 덜 채우면 구강과 아랫입술
-      // 사이에 살색 띠가 생기고, 가로가 좁으면 동그란 구멍이 뚫린 것처럼 보인다.
-      const halfW = (box[2] - box[0]) * (0.38 + 0.05 * clamp01(open / 30));
-      ctx.fillStyle = (manifest.mouthStyle || {}).fill || "#5a2f2a";
-      ctx.beginPath();
-      ctx.ellipse(cx, lipY + jawDy + open * 0.5, halfW, open * 0.55, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.drawImage(lo, 0, jawDy + open);
+    const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+    // 벌림(jaw)은 세로로 늘리고, 오므림(round)은 가로로 좁힌다 — 입술 모양만으로
+    // "아/오/우"의 차이가 읽힌다.
+    const sy = 1 + W("jawopen") * 0.5 + avgLR(W, "mouthlowerdown") * 0.15;
+    const sx = 1 - roundness(W) * 0.22 + avgLR(W, "mouthstretch") * 0.12;
+    ctx.save();
+    ctx.translate(cx, cy + jawDy);
+    ctx.scale(sx, sy);
+    ctx.translate(-cx, -cy);
+    ctx.drawImage(lips, 0, 0);
+    ctx.restore();
     return true;
   }
 

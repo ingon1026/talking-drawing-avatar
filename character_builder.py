@@ -114,7 +114,9 @@ def _fill_skin(img, box, ring=6):
             if sum(px[x, y]) >= INK_MAX:
                 skin.append(px[x, y])
     fill = _median_rgb(skin) if skin else _border_median(img, box)
-    ImageDraw.Draw(img).bitmap((0, 0), _ink_mask(img, box), fill=fill)
+    mask = _ink_mask(img, box)
+    ImageDraw.Draw(img).bitmap((0, 0), mask, fill=fill)
+    return mask
 
 
 def _ink_mask(img, box, grow=3):
@@ -168,20 +170,6 @@ def _largest_blob_box(px, box):
     return (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
 
 
-def split_lips(img, box):
-    """입 상자를 입술 사이 선에서 위/아래로 가른다. 반환: 분리선 y(캔버스 좌표).
-
-    다문 입 그림은 '윗입술 / 사이 선(가장 어두움) / 아랫입술' 구조다. 그 선을 경계로
-    두 장으로 나눠 두면 아랫입술만 내려 입을 벌릴 수 있다 — 원본 입술 모양을 지키면서
-    립싱크가 되는 유일한 방법이다. 구강을 통째로 얹으면 입술을 덮어버린다(실측).
-    """
-    x0, y0, x1, y1 = box
-    px = img.convert("RGB").load()
-    n = max(1, x1 - x0)
-    rows = [(sum(sum(px[x, y]) for x in range(x0, x1)) / n, y) for y in range(y0 + 2, y1 - 2)]
-    return min(rows)[1] if rows else (y0 + y1) // 2
-
-
 def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                     mouth_style=None, jaw_drop=6, closed_eye=(None, 4),
                     deletable=False, persona=None):
@@ -209,9 +197,7 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         box = snap_eye_box(base, tuple(map(int, (x0, y0, x1, y1))))
         eye_boxes[side] = box
 
-        open_sprite = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-        open_sprite.paste(base.crop(box).convert("RGBA"), box[:2])
-        open_sprite.save(out / f"eye_{side}_open.png")
+        eye_rgba = base.convert("RGBA")
 
         closed = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
         color, lw = closed_eye
@@ -224,20 +210,23 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
                                    fill=color, width=lw)
         closed.save(out / f"eye_{side}_closed.png")
 
-        _fill_skin(base, box)
+        eye_mask = _fill_skin(base, box)     # 지우고 그 모양을 받는다
+        open_sprite = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        open_sprite.paste(eye_rgba, (0, 0), eye_mask)
+        open_sprite.save(out / f"eye_{side}_open.png")
 
-    # 입술을 위/아래 두 장으로 가른다 — 아랫입술만 내려 벌리면 원본 모양이 지켜진다.
-    # 벡터 입으로 대체하면 얼굴이 다른 사람이 되고, 원본을 그대로 두면 벌릴 틈이 없다.
+    # 입술을 한 장으로 떼어낸다 — 렌더가 이 한 장을 늘였다 오므렸다 한다.
+    # 상·하로 갈라 벌리는 것도 해봤지만, 벌린 자리에 넣을 구강이 원본에 없어서 만들어야
+    # 했고 만든 구강은 어떤 색·모양이든 화풍과 겉돌았다. 두 장이면 스케일할 때 경계에
+    # 틈도 생긴다. 벡터 입으로 대체하는 건 얼굴을 아예 다른 사람으로 만든다.
     mb = tuple(map(int, (*T(mouth_box[0], mouth_box[1]), *T(mouth_box[2], mouth_box[3]))))
-    lip_y = split_lips(base, mb)
-    # 구강 색 — 입술 사이 선에서 뽑되 더 어둡게. 그대로 쓰면 입술과 같은 밝기라
-    # 벌어진 게 아니라 입술이 두꺼워진 것처럼 보인다.
-    mouth_ink = tuple(int(c * 0.78) for c in ink_color(base, mb))
-    for tag, (sy, ey) in (("upper", (mb[1], lip_y)), ("lower", (lip_y, mb[3]))):
-        lay = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-        lay.paste(base.crop((mb[0], sy, mb[2], ey)).convert("RGBA"), (mb[0], sy))
-        lay.save(out / f"mouth_{tag}.png")
-    _fill_skin(base, mb)                     # 원래 입 자리는 지운다(두 장이 대신 그린다)
+    src_rgba = base.convert("RGBA")
+    mask = _fill_skin(base, mb)              # 원래 입 자리를 지우고 그 모양을 받는다
+    # 스프라이트를 **지운 것과 같은 모양**으로 자른다. 사각형으로 자르면 스케일할 때
+    # 상자 안 다른 잉크(입꼬리 그림자·인중)가 같이 움직이고, base 의 지워진 윤곽이 드러난다.
+    lips = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+    lips.paste(src_rgba, (0, 0), mask)
+    lips.save(out / "mouth_lips.png")
     base.convert("RGBA").save(out / "base.png")
 
     mcx, mcy = T(*mouth_center)
@@ -249,9 +238,9 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         "name": name,
         "pupilRange": 0, "browRange": 0, "jawDrop": jaw_drop,
         "mouthCenter": [round(mcx), round(mcy)],
-        "lipSplit": lip_y, "mouthBox": list(mb),
+        "mouthBox": list(mb),
         "proceduralMouth": False,
-        "mouthStyle": {**DEFAULT_STYLE, "fill": "#%02x%02x%02x" % mouth_ink, **(mouth_style or {})},
+        "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},
         "deletable": deletable,
     }
     if persona:
