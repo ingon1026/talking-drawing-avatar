@@ -587,14 +587,12 @@ def health():
 
 
 @app.get("/")
-def index():
-    # 배포 환경(JoyVASA 없음)에서는 퍼펫 모드가 메인
-    page = "index.html" if (ROOT / "JoyVASA").exists() else "puppet.html"
-    return FileResponse(ROOT / "static" / page)
-
-
 @app.get("/puppet")
 def puppet():
+    # 페이지는 하나다. 예전엔 "/" 가 static/index.html(사진 → 영상 전용)을 서빙했는데,
+    # 영상 경로가 퍼펫으로 합쳐지면서 열등한 중복이 됐다 — 감정도 캐릭터 선택도 없고,
+    # 저장·스트리밍 같은 걸 매번 두 벌 고쳐야 했다. 사진 한 장 쓰는 기능은
+    # 드롭다운의 "임시 사진" 항목으로 옮겼다.
     return FileResponse(ROOT / "static" / "puppet.html")
 
 

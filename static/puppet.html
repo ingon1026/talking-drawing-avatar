@@ -13,7 +13,6 @@
   }
   main { width: min(560px, 94vw); padding: 24px 0 48px; }
   h1 { font-size: 1.2rem; font-weight: 600; margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
-  h1 a { color: #9a9ab0; font-size: .85rem; text-decoration: none; }
   .stage {
     width: 100%; aspect-ratio: 1; background: #fff; position: relative;
     border-radius: 16px; overflow: hidden; border: 1px solid #2a2a35;
@@ -26,7 +25,9 @@
   #stage3d { background: #0d0d12; cursor: grab; }
   #cv3d { width: 100%; height: 100%; display: block; }
   #stageVid { background: #0d0d12; }
-  #vid { width: 100%; height: 100%; display: block; object-fit: contain; }
+  /* 영상과 임시 사진 미리보기는 #stageVid 한 자리를 번갈아 쓴다 — 같은 규칙을 공유해야 갈리지 않는다 */
+  #vid, #photoPrev { width: 100%; height: 100%; display: block; object-fit: contain; }
+  #photoPrev { cursor: pointer; }   /* 클릭하면 다른 사진으로 바꾼다 */
   form { display: flex; gap: 8px; margin-top: 16px; }
   input[type=text] {
     flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35;
@@ -66,14 +67,17 @@
 </head>
 <body>
 <main>
-  <h1>실시간 퍼펫 아바타 <span><a href="/">영상 모드</a></span></h1>
+  <h1>실시간 퍼펫 아바타</h1>
 
   <div class="stage" id="stage2d"><div class="warp-shake" id="shake">
     <canvas id="gl" width="512" height="512"></canvas>
     <canvas id="cv" width="512" height="512"></canvas>
   </div></div>
   <div class="stage" id="stage3d" style="display:none"><canvas id="cv3d"></canvas></div>
-  <div class="stage" id="stageVid" style="display:none"><video id="vid" playsinline></video></div>
+  <div class="stage" id="stageVid" style="display:none">
+    <video id="vid" playsinline></video>
+    <img id="photoPrev" style="display:none" title="클릭하면 다른 사진으로 바꿉니다">
+  </div>
   <a id="saveVid" download hidden>영상 저장</a>
 
   <form id="form">
@@ -107,6 +111,8 @@
     <button type="button" id="delChar" style="display:none">삭제</button>
     <button type="button" id="clearChat" style="display:none">대화 지우기</button>
     <input type="file" id="charFile" accept="image/*" style="display:none">
+    <!-- 임시 사진 전용 입력. #charFile 은 어노테이터(캐릭터 등록)에 물려 있어 재사용하면 안 된다 -->
+    <input type="file" id="tempPhotoFile" accept="image/*" style="display:none">
   </div>
 
   <!-- checked 는 마크업에 안 넣는다 — 초기 상태의 단일 출처는 applyMode() 다 -->
@@ -165,52 +171,93 @@ async function loadCharacter(id) {
 // 3D 헤드는 서버 캐릭터 목록에 없는 고정 항목 — 드롭다운 값이 2D/3D 모드의 단일 진실이다.
 const MARK3D = "__mark3d__";
 const is3D = () => $("character").value === MARK3D;
+// 임시 사진도 같은 방식의 고정 항목이다 — 등록(눈·입 4클릭) 없이 사진 한 장으로 영상만 만든다.
+const PHOTO = "__photo__";
+const isPhoto = () => $("character").value === PHOTO;
+let tempPhoto = null;      // 선택된 사진의 dataURL (등록 안 함 — 서버엔 image_b64 로 그때그때 보낸다)
+let prevChar = MARK3D;     // 📷 를 골랐다가 사진을 안 고르면 돌아갈 자리
 
 let charList = [];
 // canVideo = 영상 경로를 쓸 수 있는가(엔진 있고 + 이 캐릭터에 원본 source.png 가 있고 + 3D 아님).
 // wantVideo = 사용자가 원하는가. 둘을 나눠 둬야 원본 없는 캐릭터를 잠깐 거쳐도 의사가 안 지워진다
 // (u_x → 돼지 → u_y 로 돌아오면 영상이 다시 선택된다).
 let wantVideo = true, joyvasaReady = true;   // health 응답 전엔 낙관 — 기존 동작과 같다
-const canVideo = () =>
-  joyvasaReady && !is3D() && !!(charList.find(c => c.id === $("character").value) || {}).video;
-const hasVideo = () => canVideo() && wantVideo;
+const canVideo = () => joyvasaReady && !is3D()
+  && (isPhoto() || !!(charList.find(c => c.id === $("character").value) || {}).video);
+// 사진 모드는 스프라이트 파츠가 없어 실시간 렌더 자체가 불가능하다 — 영상 강제.
+// wantVideo 를 무시하는 게 핵심이다: 라디오만 잠그면 직전에 실시간을 골라둔 사용자가
+// speak() 에서 파츠 없는 실시간 경로로 빠진다.
+const canLive = () => !isPhoto();
+const hasVideo = () => isPhoto() || (canVideo() && wantVideo);
 async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
   charList = list;
   const sel = $("character");
   sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
+    // JoyVASA 가 없으면 사진으로 할 수 있는 게 없다 — 옵션을 넣지 않는다.
+    // (최초 호출은 health 전이라 낙관값 true 로 들어가고, health 가 아니면 그때 지운다)
+    + (joyvasaReady ? `<option value="${PHOTO}">📷 임시 사진 (등록 없이)</option>` : "")
     + `<option value="${MARK3D}">석고상 (NVIDIA mark · 3D)</option>`;
-  sel.onchange = applyMode;
-  const pick = selectId && [...sel.options].some(o => o.value === selectId)
+  sel.onchange = onCharChange;
+  // 딥링크로는 📷 에 못 들어간다 — 사용자 제스처가 없어 파일 선택창이 열리지 않아
+  // "드롭다운은 사진인데 사진은 없는" 상태로 굳는다.
+  const pick = selectId && selectId !== PHOTO && [...sel.options].some(o => o.value === selectId)
     ? selectId : (list.length ? list[0].id : MARK3D);
-  sel.value = pick;
+  sel.value = prevChar = pick;
   await applyMode();
 }
 
+// 📷 를 고르면 파일 선택창을 연다. 취소는 알림이 없으므로(change 가 안 온다) 감지하지 않는다 —
+// 드롭다운을 **먼저** 직전 캐릭터로 되돌려 두고, 사진을 실제로 받은 뒤에만 📷 로 옮긴다.
+// 그래서 취소하면 아무 일도 안 일어난 것과 같다.
+function onCharChange() {
+  if (isPhoto() && !tempPhoto) { $("character").value = prevChar; $("tempPhotoFile").click(); return; }
+  prevChar = $("character").value;
+  applyMode();
+}
+$("tempPhotoFile").onchange = e => {
+  const file = e.target.files[0];
+  e.target.value = "";   // 같은 파일을 다시 고를 수 있게
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = () => {
+    tempPhoto = r.result;
+    $("photoPrev").src = tempPhoto;
+    $("character").value = prevChar = PHOTO;
+    applyMode();
+  };
+  r.readAsDataURL(file);
+};
+$("photoPrev").onclick = () => $("tempPhotoFile").click();   // 사진 바꾸기
+
 // 모드 전환: 스테이지 표시/숨김 + 해당 모드의 에셋 로드. 드롭다운 변경과 초기 진입이 같은 경로를 탄다.
 async function applyMode() {
-  const on3d = is3D();
+  const on3d = is3D(), onPhoto = isPhoto();
   $("stage3d").style.display = on3d ? "" : "none";
-  $("stage2d").style.display = on3d ? "none" : "";
-  $("stageVid").style.display = "none";   // 캐릭터를 바꾸면 이전 영상은 접는다
+  $("stage2d").style.display = (on3d || onPhoto) ? "none" : "";
+  // 사진 모드는 #stageVid 를 미리보기 자리로 쓴다. 그 외엔 캐릭터를 바꾸면 이전 영상을 접는다.
+  $("stageVid").style.display = onPhoto ? "" : "none";
+  $("photoPrev").style.display = onPhoto ? "" : "none";
+  $("vid").style.display = onPhoto ? "none" : "";   // 사진 모드 진입은 미리보기부터 (speakVideo 가 되돌린다)
   $("saveVid").hidden = true;
   $("vid").pause();
-  // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 3D 에선 숨긴다
-  $("addChar").style.display = on3d ? "none" : "";
+  // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 그 캔버스가 안 보이는 모드에선 숨긴다
+  $("addChar").style.display = (on3d || onPhoto) ? "none" : "";
   updateDelBtn();
   // 출력 라디오는 표시를 겸한다 — 못 쓰는 조합이면 영상 쪽을 잠그고 실시간으로 내린다.
   // disabled 만 걸고 checked 를 안 옮기면 "잠긴 채 선택된" 상태가 남으므로 두 줄 다 필요하다.
   // 아래 await 보다 **앞**이어야 한다: 석고상 첫 선택 시 41MB 받는 동안 라디오가
   // 이전 캐릭터 상태로 남는다.
-  const useVid = canVideo() && wantVideo;
+  const useVid = hasVideo();
   $("modeVideo").disabled = !canVideo();
+  $("modeLive").disabled = !canLive();
   $("modeVideo").checked = useVid;
   $("modeLive").checked = !useVid;
   // 엔진 셀렉트는 실시간 경로에서만 읽힌다 — 영상일 땐 "~0.5초" 라벨이 거짓말이라 감춘다.
   // disabled 가 아니라 hidden 인 이유가 그것이다(회색이어도 텍스트는 읽힌다).
   $("engine").style.display = useVid ? "none" : "";
   if (on3d) await ensure3D().catch(e => setStatus("3D 로드 실패: " + e.message, true));
-  else await loadCharacter($("character").value);
+  else if (!onPhoto) await loadCharacter($("character").value);   // 사진엔 파츠가 없다 (부르면 404 17개)
 }
 
 // applyMode 안의 .checked 대입은 프로그래밍적이라 change 를 발사하지 않는다 — 그래서 여기서
@@ -360,6 +407,7 @@ function render(now) {
     annotator.draw();
     return;
   }
+  if (isPhoto()) return;   // 그릴 파츠도 없고 2D 스테이지도 닫혀 있다 (parts 는 직전 캐릭터 것이 남아 있다)
   if (is3D() ? !mounted : !parts.base) return;
 
   // 평활 (비짐 떨림 방지 — 자음 반응성을 위해 빠르게, 매 프레임 무할당)
@@ -452,7 +500,10 @@ async function speakVideo(text, emotion) {
   $("saveVid").hidden = true;
   const r = await fetch("/api/speak", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value,
+    // 사진 모드는 등록된 캐릭터가 없다 — 서버는 char_id 대신 image_b64 를 받는다(둘 중 하나 필수).
+    body: JSON.stringify({ text, voice: $("voice").value,
+                           char_id: isPhoto() ? null : $("character").value,
+                           image_b64: isPhoto() ? tempPhoto : null,
                            rate: pr.rate || 0, pitch: pr.pitch || 0, volume: pr.volume || 0,
                            emotion: seg ? seg.emo : null, intensity: seg ? seg.intensity : 1,
                            auto_emo: auto, prosody_table: auto ? PROSODY_TABLE : null,
@@ -469,6 +520,8 @@ async function speakVideo(text, emotion) {
   v.onplaying = () => setStatus("");
   $("stage2d").style.display = "none";
   $("stageVid").style.display = "";
+  $("photoPrev").style.display = "none";   // 미리보기와 자리를 나눠 쓴다 — 재생 중엔 영상
+  v.style.display = "";
   v.play().catch(() => {});
   for (let i = 0; i < 150; i++) {
     const j = await fetch(`/api/jobs/${job_id}`).then(x => x.json());
@@ -477,7 +530,8 @@ async function speakVideo(text, emotion) {
       if (j.emotion && j.emotion !== "neutral") emo.setEmotion(j.emotion, 0.9, false);
       // 저장은 완성본 파일로 — 스트림 URL 은 chunked 라 다운로드에 안 맞는다.
       // 서버는 24시간 뒤 지운다(purge_old_media).
-      const a = $("saveVid"), name = $("character").selectedOptions[0].text;
+      // 옵션 텍스트를 그대로 쓰면 이모지가 파일명에 들어간다 — 사진 모드는 고정 이름.
+      const a = $("saveVid"), name = isPhoto() ? "임시사진" : $("character").selectedOptions[0].text;
       a.href = j.video_url;
       a.download = `${name}_${text.slice(0, 12)}.mp4`.replace(/[\\/:*?"<>|]/g, "_");
       // 재생 중 실시간으로 내렸거나 캐릭터를 바꿨으면 영상은 이미 접혔다 — 링크만 되살아나면 안 된다.
@@ -537,12 +591,12 @@ const charsReady = initCharacters(new URLSearchParams(location.search).get("char
 fetch("/api/health").then(r => r.json()).then(h => {
   if (!h.a2f) document.querySelector('#engine option[value="a2f"]')?.remove();
   joyvasaReady = !!h.joyvasa_ready;
-  // JoyVASA 없으면 "/" 가 이 페이지를 서빙하므로 영상 모드 링크(h1 의 유일한 링크)를 지운다.
-  // 그 배포에도 source.png 는 있어서(빌더가 엔진과 무관하게 저장) 라디오를 안 잠그면
+  // JoyVASA 없는 배포에도 source.png 는 있어서(빌더가 엔진과 무관하게 저장) 라디오를 안 잠그면
   // 영상이 선택된 채 뜨고 /api/speak 이 실패한다. charList 가 찬 뒤에 부른다 —
   // 빈 id 로 loadCharacter 가 도는 경쟁을 피한다.
+  // 임시 사진 옵션은 낙관값으로 이미 들어가 있으니 여기서 걷는다(다음 initCharacters 부턴 안 넣는다).
   if (!h.joyvasa_ready) {
-    document.querySelector("h1 a")?.remove();
+    document.querySelector(`#character option[value="${PHOTO}"]`)?.remove();
     charsReady.then(applyMode);
   }
   if (!h.chat) {   // 대화 백엔드 없으면 대화 UI 숨김

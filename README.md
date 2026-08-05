@@ -74,7 +74,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 
 - **NeuroSync 가중치**(게이트): [convaitech/NEUROSYNC](https://huggingface.co/convaitech/NEUROSYNC) 약관 동의 + `HF_TOKEN` 설정 → 첫 발화 때 자동 다운로드. 없으면 음량 기반 폴백으로 동작.
 - **NVIDIA A2F-3D 엔진**(선택): C++/TensorRT 빌드 필요 — [`Audio2Face-3D-SDK/_project_build/SETUP.md`](https://github.com/NVIDIA/Audio2Face-3D-SDK) 절차 참조 (WSL2 + RTX 4070 Ti에서 검증).
-- **JoyVASA 영상 모드**(선택): 사진풍 인물 그림을 통째로 애니메이션하는 별도 모드 (`/`).
+- **JoyVASA 영상 모드**(선택): 등록 캐릭터와 드롭다운의 `📷 임시 사진` 이 이 경로를 탄다 — 입이 실제로 벌어지고 이·혀·구강이 화풍에 맞게 생성된다(웜 ~2초). 없으면 스프라이트 경로만 동작.
 - **TRT 렌더 가속**(선택, 1.4배): [`trt_warp.py`](trt_warp.py) 참조. `$FLP_ROOT/checkpoints/liveportrait_onnx/warping_spade-fix.trt` 가 있으면 자동으로 켜진다
   (`FLP_ROOT` 기본값은 `~/FasterLivePortrait`).
   ```bash
@@ -96,8 +96,8 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 ├─ a2f_source.py           # 음성 → ARKit 52ch (NVIDIA A2F-3D)
 ├─ character_builder.py    # 그림 → 퍼펫 캐릭터 (눈/입 분리·베이스 생성)
 ├─ trt_warp.py             # 영상 렌더의 warping+spade 만 TensorRT 로 대체 (있으면 자동, 1.4배)
-├─ static/avatar_core.js   # 세 페이지 공유 렌더 코어 (docs/avatar_core.js 는 복사본 — 수정 후 `cp static/avatar_core.js docs/` 로 동기화)
-├─ static/puppet.html      # 실시간 퍼펫 렌더러 + 제어 패널
+├─ static/avatar_core.js   # 렌더 코어 (docs/avatar_core.js 는 복사본 — 수정 후 `cp static/avatar_core.js docs/` 로 동기화)
+├─ static/puppet.html      # 유일한 서버 페이지 — 스프라이트·영상·3D 세 경로를 드롭다운으로 고른다
 ├─ docs/                   # GitHub Pages 정적 데모 (서버리스 버전)
 ├─ assets_characters/      # 캐릭터 에셋 (base/눈 스프라이트/manifest)
 └─ tools/                  # 캐릭터 생성 스크립트
