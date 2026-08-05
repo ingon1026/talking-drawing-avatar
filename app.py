@@ -498,24 +498,29 @@ def create_character(req: CharacterCreateReq):
     char_id = "u_" + uuid.uuid4().hex[:6]
     updir = ROOT / "uploads"
     updir.mkdir(exist_ok=True)
+    # build_character 가 파일 경로를 받으므로 잠깐 떨군다. 끝나면 지운다 — 예전엔
+    # 남겨 둬서 캐릭터마다 원본이 source.png 와 uploads 에 두 벌씩 쌓였다(실측 85MB).
+    # finally 인 이유: 빌드가 실패해도 지워야 한다. 고아 17개가 그렇게 생긴 걸로 보인다.
     src = updir / f"{char_id}.png"
     src.write_bytes(raw)
-
-    with PILImage.open(src) as im:
-        s = min(512 / im.width, 512 / im.height)
-    width = max(12, round((req.mouth_box[2] - req.mouth_box[0]) * s * 0.42))
-    eye_lw = max(3, round(req.eye_l[2] * s * 0.35))
-    build_character(
-        src, ROOT / "assets_characters" / char_id,
-        name=req.name.strip() or "내 캐릭터",
-        eyes={"L": tuple(req.eye_l), "R": tuple(req.eye_r)},
-        mouth_box=tuple(req.mouth_box), mouth_center=tuple(req.mouth_center),
-        mouth_style={"width": width}, jaw_drop=6, closed_eye=(None, eye_lw),
-        deletable=True)
-    # 원본을 캐릭터 자산으로 보관 — JoyVASA(영상 생성)는 눈·입이 지워진 base 가 아니라
-    # 손대지 않은 그림이 있어야 한다. 캐릭터를 지울 때 같이 지워지도록 폴더 안에 둔다.
     cdir = ROOT / "assets_characters" / char_id
-    shutil.copyfile(src, cdir / "source.png")
+    try:
+        with PILImage.open(src) as im:
+            s = min(512 / im.width, 512 / im.height)
+        width = max(12, round((req.mouth_box[2] - req.mouth_box[0]) * s * 0.42))
+        eye_lw = max(3, round(req.eye_l[2] * s * 0.35))
+        build_character(
+            src, cdir,
+            name=req.name.strip() or "내 캐릭터",
+            eyes={"L": tuple(req.eye_l), "R": tuple(req.eye_r)},
+            mouth_box=tuple(req.mouth_box), mouth_center=tuple(req.mouth_center),
+            mouth_style={"width": width}, jaw_drop=6, closed_eye=(None, eye_lw),
+            deletable=True)
+        # 원본을 캐릭터 자산으로 보관 — JoyVASA(영상 생성)는 눈·입이 지워진 base 가 아니라
+        # 손대지 않은 그림이 있어야 한다. 캐릭터를 지울 때 같이 지워지도록 폴더 안에 둔다.
+        shutil.copyfile(src, cdir / "source.png")
+    finally:
+        src.unlink(missing_ok=True)
     # 영상 가능 여부를 manifest 에 박는다. source.png 존재 여부로 판단하면 "영상 불가"를
     # 표현하려고 사용자 원본을 지워야 하는데 복구가 안 된다 — 원본은 무조건 남기고
     # 판정은 명시적으로 적는다. build_character 가 쓴 뒤라 읽어서 키만 더한다.
@@ -563,10 +568,7 @@ def delete_character(char_id: str):
         deletable = False
     if not deletable:
         raise HTTPException(403, "기본 제공 캐릭터는 삭제할 수 없습니다.")
-    shutil.rmtree(d)
-    up = ROOT / "uploads" / f"{char_id}.png"
-    if up.exists():
-        up.unlink()
+    shutil.rmtree(d)   # 원본(source.png)도 이 안에 있다 — uploads 엔 더 이상 안 남긴다
     return {"ok": True}
 
 
