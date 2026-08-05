@@ -32,10 +32,11 @@
     flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35;
     background: #0d0d12; color: inherit; font-size: 1rem;
   }
-  button, select {
+  button, select, #saveVid {
     height: 38px; padding: 0 14px; border-radius: 9px; font-size: .9rem;
     background: #21212b; color: inherit; border: 1px solid #2f2f3c; cursor: pointer;
   }
+  #saveVid { display: inline-block; line-height: 36px; text-decoration: none; margin-top: 10px; }
   button.primary { background: #5b8cff; border-color: #5b8cff; color: #fff; }
   button:disabled { background: #26262f; color: #666; cursor: default; }
   .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
@@ -69,6 +70,7 @@
   </div></div>
   <div class="stage" id="stage3d" style="display:none"><canvas id="cv3d"></canvas></div>
   <div class="stage" id="stageVid" style="display:none"><video id="vid" playsinline></video></div>
+  <a id="saveVid" download hidden>영상 저장</a>
 
   <form id="form">
     <button id="micBtn" type="button" title="마이크로 말 걸기" style="display:none">음성</button>
@@ -174,6 +176,7 @@ async function applyMode() {
   $("stage3d").style.display = on3d ? "" : "none";
   $("stage2d").style.display = on3d ? "none" : "";
   $("stageVid").style.display = "none";   // 캐릭터를 바꾸면 이전 영상은 접는다
+  $("saveVid").hidden = true;
   $("vid").pause();
   // 그림 추가(어노테이터)는 2D 캔버스(#cv)에 그리므로 3D 에선 숨긴다
   $("addChar").style.display = on3d ? "none" : "";
@@ -415,6 +418,7 @@ async function speakVideo(text, emotion) {
   if (seg) emo.setEmotion(seg.emo, seg.intensity, false);
   const pr = seg ? AvatarCore.voiceProsody(seg.emo, seg.intensity) : {};
   setStatus("영상 만드는 중… (4~5초)");
+  $("saveVid").hidden = true;
   const r = await fetch("/api/speak", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value,
@@ -433,6 +437,11 @@ async function speakVideo(text, emotion) {
       v.src = j.video_url;
       $("stage2d").style.display = "none";
       $("stageVid").style.display = "";
+      // 서버는 생성물을 24시간 뒤 지운다(purge_old_media) — 남기려면 여기서 받아야 한다.
+      const a = $("saveVid"), name = $("character").selectedOptions[0].text;
+      a.href = j.video_url;
+      a.download = `${name}_${text.slice(0, 12)}.mp4`.replace(/[\\/:*?"<>|]/g, "_");
+      a.hidden = false;
       await v.play().catch(() => {});
       return;
     }

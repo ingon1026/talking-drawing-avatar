@@ -32,6 +32,10 @@
     color: #fff; font-size: 1rem; cursor: pointer;
   }
   button:disabled { background: #333; cursor: default; }
+  #saveVid {
+    display: inline-block; margin-top: 12px; padding: 10px 18px; border-radius: 10px;
+    background: #2a2a35; color: inherit; font-size: .9rem; text-decoration: none;
+  }
   .controls { margin-top: 16px; display: grid; gap: 12px; font-size: .9rem; }
   .controls label { display: flex; align-items: center; gap: 10px; }
   .controls select, .controls input[type=range] { flex: 1; }
@@ -48,6 +52,7 @@
     <video id="player" style="display:none" playsinline></video>
     <div id="placeholder" class="placeholder" style="display:none"></div>
   </div>
+  <a id="saveVid" download hidden>영상 저장</a>
 
   <div class="controls" style="margin-top:12px">
     <button type="button" id="photoBtn" style="background:#2a2a35">📷 내 사진·그림 올리기</button>
@@ -127,6 +132,7 @@ $("form").onsubmit = async e => {
   const text = $("text").value.trim();
   if (!text) return;
   $("send").disabled = true;
+  $("saveVid").hidden = true;
   setStatus("전송 중…");
   try {
     const res = await fetch("/api/speak", {
@@ -165,6 +171,11 @@ function play(url) {
   v.src = url;
   v.play();
   v.onended = () => { v.style.display = "none"; $("avatar").style.display = ""; };
+  // 서버는 생성물을 24시간 뒤 지운다(purge_old_media) — 남기려면 여기서 받아야 한다.
+  const a = $("saveVid");
+  a.href = url;
+  a.download = `말하는그림_${$("text").value.trim().slice(0, 12)}.mp4`.replace(/[\\/:*?"<>|]/g, "_");
+  a.hidden = false;
 }
 
 function setStatus(msg, isError) {
