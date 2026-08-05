@@ -4,20 +4,20 @@
 
 **텍스트 한 줄이면 — LLM이 감정을 읽고, 그림·사진이 그 감정으로 말한다**
 
-[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-GitHub_Pages-5b8cff?style=for-the-badge)](https://ingon1026.github.io/talking-drawing-avatar/)
 [![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![NVIDIA](https://img.shields.io/badge/Audio2Face--3D-76B900?logo=nvidia&logoColor=white)](https://github.com/NVIDIA/Audio2Face-3D)
+[![TensorRT](https://img.shields.io/badge/TensorRT-8.6-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/tensorrt)
+[![Ollama](https://img.shields.io/badge/EXAONE_3.5-ollama-222222?logo=ollama&logoColor=white)](https://ollama.com/library/exaone3.5)
 
-<img src="docs/assets/demo_video.gif" width="280" alt="생성 영상 데모 — 입이 실제로 벌어지고 문장마다 표정이 바뀐다">
+<img src="docs/assets/demo_video.gif" width="280" alt="생성 영상 데모 — 그림 한 장이 말한다">
 
 *"정말 축하드려요! → 화가 나요. → 허전하네요."*
-*한 문장씩 감정이 판정되고, 입이 실제로 벌어진다. (얼굴은 AI 생성 가상 인물)*
+*그림 한 장과 텍스트만 넣었다 — 문장마다 감정이 판정되고, 입이 실제로 벌어진다.*
 
-<img src="docs/assets/emotion_video.png" width="90%" alt="문장별 표정 — 기쁨 · 화남 · 슬픔">
+<img src="docs/assets/mouth_video.png" width="90%" alt="원본은 다문 입 — 이·입안은 전부 생성된 픽셀">
 
-*같은 영상의 세 지점 — 기쁨 · 화남 · 슬픔. 첨부한 건 그림 한 장과 텍스트뿐이다.*
+*왼쪽이 원본이다. **원본은 입을 다물고 있다** — 벌어진 입과 이는 전부 생성된 픽셀이다.*
 
 </div>
 
@@ -101,9 +101,9 @@ ms/frame)도 코드에 남겨 뒀다 — 다음 사람이 같은 걸 다시 시�
 
 ## 🖥 데모 vs 풀버전
 
-| | 🌐 [정적 데모](https://ingon1026.github.io/talking-drawing-avatar/) | 💻 로컬 풀버전 |
+| | 🌐 정적 데모 (`docs/`) | 💻 로컬 풀버전 |
 |---|---|---|
-| 서버 | 불필요 (GitHub Pages) | FastAPI + GPU |
+| 서버 | 불필요 (정적 페이지) | FastAPI + GPU |
 | TTS | 브라우저 내장 (speechSynthesis) | edge-tts (선히/인준/현수) |
 | 립싱크 | 한글 음절→입모양 타임라인 (근사) | **음성 기반 52채널 근육** (NeuroSync / A2F-3D) |
 | 생성 영상 (입 벌어짐) | ❌ | ✅ JoyVASA |
@@ -170,7 +170,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 | NeuroSync (벤더링·가중치) | 듀얼 — 연매출 $1M 미만 MIT / 이상 상업 허가 |
 | NVIDIA Audio2Face-3D | SDK MIT / 모델 NVIDIA Open Model License |
 
-데모 GIF 의 얼굴은 AI 로 생성한 가상 인물이다.
+데모 GIF 의 캐릭터는 [Pngtree](https://pngtree.com) 일러스트로 만들었다.
 
 ---
 
