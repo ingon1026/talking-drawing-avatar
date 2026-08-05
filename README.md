@@ -2,7 +2,8 @@
 
 # 🎨 Talking Drawing Avatar
 
-**내가 그린 그림에 목소리와 얼굴 근육을 불어넣는 실시간 아바타 엔진**
+**내가 그린 그림을 말하게 하는 아바타 엔진**
+*즉시 반응하는 퍼펫과, 입이 실제로 벌어지는 생성 영상 — 두 경로를 한 화면에서*
 
 [![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-GitHub_Pages-5b8cff?style=for-the-badge)](https://ingon1026.github.io/talking-drawing-avatar/)
 [![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -12,23 +13,51 @@
 
 <img src="docs/assets/demo_default.gif" width="250" alt="기본 캐릭터 데모"> <img src="docs/assets/demo_pig.gif" width="250" alt="말하는 돼지 데모"> <img src="docs/assets/demo_stick.gif" width="250" alt="말하는 졸라맨 데모">
 
-*기본 캐릭터부터 화이트보드 낙서까지 — 텍스트만 입력하면 말을 합니다.*
+*실시간 퍼펫 경로 — 화이트보드 낙서도 텍스트만 입력하면 말을 합니다.*
 
 </div>
 
 ---
 
+## 🎭 두 경로
+
+이 프로젝트의 핵심은 **입을 어떻게 벌리느냐**다.
+
+스프라이트를 아무리 변형해도 **다문 입 그림에는 벌어진 입 안쪽 픽셀이 없다.** 이·혀·구강이
+애초에 존재하지 않으니 만들어 넣는 수밖에 없다. 그래서 경로가 둘이다.
+
+| | 🎭 실시간 퍼펫 | 🎬 생성 영상 |
+|---|---|---|
+| 방식 | 눈·입 스프라이트를 캔버스에서 변형 | JoyVASA + LivePortrait 로 픽셀 생성 |
+| 입 | 벌어지지 않음 (윤곽 변형만) | **실제로 벌어짐 — 이·혀·구강 생성** |
+| 반응 | 즉시 (~0.5초) | 재생 시작까지 ~2초 |
+| 되는 그림 | 아무거나 | 얼굴 검출이 되는 그림 (실사·포트레이트 일러스트) |
+| 얼굴 근육 | ARKit 52채널 전부 | 눈썹 + 입꼬리 |
+
+**어느 경로를 탈지는 캐릭터가 정한다.** 등록할 때 LivePortrait 의 얼굴 검출을 한 번 돌려
+`manifest.json` 의 `video` 에 적어 둔다. 검출이 안 되는 그림(손그림 전신 낙서 등)은 영상
+경로를 아예 주지 않는다 — 억지로 태우면 모델이 **그림 전체를 얼굴로 착각해 통째로 늘린다.**
+
+> 실측: 실사 ○ / 포트레이트 일러스트 ○ / 손그림 전신 ✗ / **손그림 머리만 잘라도 ✗**
+> → 자동 크롭으로는 못 구제한다. 그래서 태우지 않는 쪽을 택했다.
+
+둘 다 가능한 캐릭터는 화면의 `출력` 라디오로 직접 고른다.
+
 ## ✨ 특징
 
-- **텍스트 → 발화**: 한국어 TTS(edge-tts)로 문장을 말하고, 음성에 맞춰 입과 얼굴 근육이 움직임
-- **ARKit 52채널 얼굴 근육**: 음성→블렌드셰이프 엔진 2종을 선택 사용
+- **텍스트 → 발화**: 한국어 TTS(edge-tts)로 말하고, 음성에 맞춰 입과 얼굴 근육이 움직임
+- **LLM 감정 → 목소리 + 표정**: EXAONE 3.5(로컬 ollama)가 **문장마다** 감정을 판정해
+  목소리 톤(빠르기·높이·크기)과 얼굴(눈썹·입꼬리)에 싣는다. 영상도 문장마다 표정이 바뀐다
+  (0.25초 크로스페이드). 목소리 톤만 발화 단위 — SSML 프로소디가 구간을 못 나눈다
+- **ARKit 52채널 얼굴 근육**(실시간 경로): 음성→블렌드셰이프 엔진 2종을 선택 사용
   - ⚡ **NeuroSync** (235M, 웜 추론 0.3초) — 실시간 대화용
   - 🟩 **NVIDIA Audio2Face-3D** (mark v2.3, WSL2 로컬 빌드) — 자연 깜빡임까지 생성
-- **벡터 입 렌더링**: 입모양 스프라이트 교체가 아니라, 근육 채널 14개가 입 윤곽 제어점을 매 프레임 직접 변형 — 입꼬리 좌우 독립, 윗니·혀 노출, 무한 중간 단계
-- **얼굴 메시 워핑**: 입을 벌리면 턱선·볼이 그림째로 변형 (WebGL 가우시안 변위장, 실패 시 자동 폴백)
-- **감정 프리셋** 😐😊😢😠😲 + 캐릭터 추가/삭제 관리
-- **눈깜빡임 완전 제어**: 즉시 깜빡 버튼 / 자동 깜빡임 간격 / 감김 슬라이더
-- **아무 그림이나 캐릭터로**: 드래그앤드랍 → 4클릭(왼눈·오른눈·입 중심·입 영역) → 완성
+- **벡터 입 렌더링**: 입모양 스프라이트 교체가 아니라, 근육 채널 14개가 입 윤곽 제어점을
+  매 프레임 직접 변형 — 입꼬리 좌우 독립, 윗니·혀 노출, 무한 중간 단계
+- **얼굴 메시 워핑**: 입을 벌리면 턱선·볼이 그림째로 변형 (WebGL 가우시안 변위장, 실패 시 폴백)
+- **아무 그림이나 캐릭터로**: 드래그앤드랍 → 4클릭(왼눈·오른눈·입 중심·입 영역) → 완성.
+  등록 없이 사진 하나만 시험해 보려면 드롭다운의 `📷 임시 사진`
+- **대화 모드**: LLM 응답을 캐릭터가 말한다. 감정도 응답과 함께 온다
 - **GPU 없는 무료 데모**: 브라우저 TTS + 한글 음절 분해→입모양 타임라인으로 서버 없이 동작
 
 <div align="center">
@@ -40,17 +69,31 @@
 ## 🏗 아키텍처
 
 ```mermaid
-flowchart LR
-    T["💬 텍스트"] --> TTS["edge-tts<br/>(한국어 TTS)"]
+flowchart TB
+    T["💬 텍스트"] --> EX["🧠 EXAONE 3.5<br/>문장별 감정 판정"]
+    T --> TTS["edge-tts<br/>한국어 TTS"]
+    EX -. 목소리 톤 .-> TTS
     TTS --> WAV["🔊 음성"]
-    WAV --> NS["NeuroSync<br/>235M · 0.3s"]
-    WAV --> A2F["NVIDIA<br/>Audio2Face-3D"]
-    NS --> BS["ARKit 52ch<br/>블렌드셰이프"]
-    A2F --> BS
-    BS --> R["🎭 웹 캔버스 퍼펫<br/>(벡터 입 + 파츠 합성)"]
-    C["🖼 그림 → 4클릭<br/>캐릭터 빌더"] --> R
-    U["👁 깜빡임 · 표정<br/>실시간 조작"] --> R
+
+    WAV --> JV["JoyVASA + LivePortrait<br/>+ TensorRT 가속"]
+    EX -. 문장별 표정 .-> JV
+    JV --> VID["🎬 생성 영상<br/>입이 벌어진다 · ~2초"]
+
+    WAV --> NS["NeuroSync 235M<br/>/ NVIDIA A2F-3D"]
+    NS --> BS["ARKit 52채널<br/>블렌드셰이프"]
+    EX -. 표정 .-> BS
+    BS --> PUP["🎭 캔버스 퍼펫 / 3D 메시<br/>즉시"]
+
+    C["🖼 그림 → 4클릭<br/>캐릭터 빌더"] --> DET{"얼굴 검출?"}
+    DET -->|된다| JV
+    DET -->|안 된다| PUP
 ```
+
+감정 판정과 TTS 는 **동시에** 돈다. 프로소디만 TTS 를 막고 있어서, 중립으로 합성해 두고
+판정이 오면 같은 값을 ffmpeg 로 입힌다(edge-tts 의 pitch 가 절대 Hz 오프셋이라 리샘플
+배율이 1.14 를 안 넘고, 실측상 포먼트 이동이 관측되지 않는다).
+
+렌더는 프레임이 나오는 대로 프래그먼트 mp4 로 흘려보내 **다 만들기 전에 재생이 시작된다.**
 
 ## 🖥 데모 vs 풀버전
 
@@ -59,6 +102,8 @@ flowchart LR
 | 서버 | 불필요 (GitHub Pages) | FastAPI + GPU |
 | TTS | 브라우저 내장 (speechSynthesis) | edge-tts (선히/인준/현수) |
 | 립싱크 | 한글 음절→입모양 타임라인 (근사) | **음성 기반 52채널 근육** (NeuroSync / A2F-3D) |
+| 생성 영상 (입 벌어짐) | ❌ | ✅ JoyVASA |
+| 감정 | 규칙 기반 (키워드) | **EXAONE 3.5 문장별 판정** |
 | 캐릭터 생성 | ✅ (세션 한정) | ✅ (영구 저장) |
 | 요구 사양 | 아무 브라우저 | NVIDIA GPU (12GB 검증) |
 
@@ -74,7 +119,8 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 
 - **NeuroSync 가중치**(게이트): [convaitech/NEUROSYNC](https://huggingface.co/convaitech/NEUROSYNC) 약관 동의 + `HF_TOKEN` 설정 → 첫 발화 때 자동 다운로드. 없으면 음량 기반 폴백으로 동작.
 - **NVIDIA A2F-3D 엔진**(선택): C++/TensorRT 빌드 필요 — [`Audio2Face-3D-SDK/_project_build/SETUP.md`](https://github.com/NVIDIA/Audio2Face-3D-SDK) 절차 참조 (WSL2 + RTX 4070 Ti에서 검증).
-- **JoyVASA 영상 모드**(선택): 등록 캐릭터와 드롭다운의 `📷 임시 사진` 이 이 경로를 탄다 — 입이 실제로 벌어지고 이·혀·구강이 화풍에 맞게 생성된다(웜 ~2초). 없으면 스프라이트 경로만 동작.
+- **JoyVASA 영상 모드**(선택): 없으면 영상 경로가 통째로 잠기고 스프라이트만 동작한다(`/api/health` 의 `joyvasa_ready`).
+- **EXAONE 감정**(선택): 로컬 ollama 에 `exaone3.5:2.4b`. 없으면 감정 없이 중립으로 동작.
 - **TRT 렌더 가속**(선택, 1.4배): [`trt_warp.py`](trt_warp.py) 참조. `$FLP_ROOT/checkpoints/liveportrait_onnx/warping_spade-fix.trt` 가 있으면 자동으로 켜진다
   (`FLP_ROOT` 기본값은 `~/FasterLivePortrait`).
   ```bash
@@ -88,24 +134,41 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 - 상시 실행: systemd 유저 서비스로 등록해 자동 기동 가능. HF Spaces 배포용 `Dockerfile` / `requirements-space.txt` 포함 (Docker Space는 HF PRO 필요).
 - **로컬 풀버전을 남에게 보여주기**: `bash tools/share_tunnel.sh` → Cloudflare quick tunnel로 공개 URL 생성 (무료·계정 불필요). 대화·A2F 포함 전 기능이 그대로 공개된다. 내 PC가 켜져 있을 때만 접속되고 실행마다 URL이 바뀐다. 인증이 없으니 아는 사람에게만 공유.
 
+## ⚡ 성능 (RTX 4070 Ti, 4.7초 발화 기준)
+
+영상 경로가 처음엔 **말하기 → 재생까지 4.8초**였다. 세 단계로 줄였다.
+
+| | 걸린 시간 | 무엇을 |
+|---|---|---|
+| 시작 | 4.8s | — |
+| TRT 렌더 | 3.3s | 전체의 66%를 먹던 warping+spade 만 TensorRT 로 교체 (24.6 → 15.5 ms/frame) |
+| 스트리밍 재생 | 2.3s | 다 만들고 트는 대신, 프레임이 나오는 대로 인코딩해 흘려보냄 |
+| 감정 병렬화 | **2.1s** | 감정 판정(0.39s)을 TTS(0.56s)와 동시에 |
+
+전부 먼저 프로파일하고 고쳤다. 재보니 **오히려 느려서 버린 것**(배치 렌더: 36.0 vs 24.6 ms/frame)도
+코드에 남겨 뒀다 — 다음 사람이 같은 걸 다시 시도하지 않게.
+
 ## 📁 구조
 
 ```
-├─ app.py                  # FastAPI 서버 (TTS·잡 큐·캐릭터 API)
+├─ app.py                  # FastAPI 서버 (TTS·잡 큐·캐릭터 API·스트리밍)
+├─ pipeline.py             # JoyVASA 래퍼 — 깜빡임·문장별 표정 주입, 얼굴 검출 판정
+├─ trt_warp.py             # 영상 렌더의 warping+spade 만 TensorRT 로 대체 (있으면 자동, 1.4배)
 ├─ blendshape_source.py    # 음성 → ARKit 52ch (NeuroSync, 폴백 내장)
 ├─ a2f_source.py           # 음성 → ARKit 52ch (NVIDIA A2F-3D)
+├─ llm_source.py           # EXAONE — 대화 + 문장별 감정 판정
 ├─ character_builder.py    # 그림 → 퍼펫 캐릭터 (눈/입 분리·베이스 생성)
-├─ trt_warp.py             # 영상 렌더의 warping+spade 만 TensorRT 로 대체 (있으면 자동, 1.4배)
-├─ static/avatar_core.js   # 렌더 코어 (docs/avatar_core.js 는 복사본 — 수정 후 `cp static/avatar_core.js docs/` 로 동기화)
-├─ static/puppet.html      # 유일한 서버 페이지 — 스프라이트·영상·3D 세 경로를 드롭다운으로 고른다
+├─ static/avatar_core.js   # 렌더 코어 (docs/avatar_core.js 는 복사본 — 수정 후 `cp static/avatar_core.js docs/`)
+├─ static/puppet.html      # 유일한 서버 페이지 — 세 경로를 드롭다운으로 고른다
+├─ patches/                # JoyVASA 로컬 패치 (표정·깜빡임 주입 지점)
 ├─ docs/                   # GitHub Pages 정적 데모 (서버리스 버전)
 ├─ assets_characters/      # 캐릭터 에셋 (base/눈 스프라이트/manifest)
-└─ tools/                  # 캐릭터 생성 스크립트
+└─ tools/                  # 캐릭터 생성·계측 스크립트
 ```
 
-캐릭터가 영상(JoyVASA) 경로를 타는지 스프라이트 실시간 경로만 쓰는지는 manifest 의 `video` 불리언으로
-갈린다 — 등록 시점에 LivePortrait 의 얼굴 검출로 정한다. 그 키가 없던 시절의 캐릭터는
-`PYTHONPATH= .venv/bin/python tools/rejudge_video.py` 로 소급 판정한다(기본 dry-run, 쓰려면 `--apply`).
+캐릭터가 어느 경로를 타는지는 manifest 의 `video` 불리언으로 갈린다. 그 키가 없던 시절의
+캐릭터는 `PYTHONPATH= .venv/bin/python tools/rejudge_video.py` 로 소급 판정한다
+(기본 dry-run, 쓰려면 `--apply`).
 
 ## ⚖️ 라이선스 유의사항
 
@@ -115,6 +178,7 @@ uv pip install --python .venv/bin/python fastapi 'uvicorn[standard]' edge-tts pi
 | NeuroSync (벤더링·가중치) | 듀얼 — 연매출 $1M 미만 MIT / 이상 상업 허가 |
 | NVIDIA Audio2Face-3D | SDK MIT / 모델 NVIDIA Open Model License |
 | JoyVASA·LivePortrait (영상 모드) | MIT — 단 InsightFace 검출 모델은 **비상업 전용** |
+| EXAONE 3.5 (감정·대화) | EXAONE AI Model License 1.1 — **NC(비상업)** |
 
 ---
 
