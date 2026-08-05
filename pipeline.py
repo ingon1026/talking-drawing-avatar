@@ -21,15 +21,15 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 #   3·4·11·15 = 얼굴 전체 상하 이동 — 눈썹처럼 보이지만 전역이라 쓰면 안 된다
 # ±0.08 은 과하고 ±0.04 가 화면에서 읽히는 크기다.
 BROW_IDX, BROW_AXIS = 2, 1
-EMOTION_BROW = {           # EMOTIONS 프리셋(avatar_core.js)의 brow 채널과 부호를 맞춘다
-    "joy": 0.010,          # browinnerup 없음 — 거의 중립
-    "sad": 0.040,          # browinnerup 0.7
-    "angry": -0.045,       # browdown 0.85
-    "surprise": 0.045,     # browouterup 0.75 + innerup 0.6
-    "fear": 0.040,         # browinnerup 0.85
-    "shy": 0.005,
-    "neutral": 0.0,
-}
+# 값은 avatar_core.js EMOTIONS 의 brow 채널 최대치 × BROW_SCALE 로 유도한다 — 손으로 적으면
+# 두 경로의 감정 간 상대 세기가 어긋난다(실시간은 fear 0.85 > sad 0.7 인데 영상은 같았다).
+BROW_SCALE = 0.053         # ±0.045 가 화면에서 읽히는 상한이 되도록 맞춘 배율
+_BROW_UP = {"sad": 0.7, "surprise": 0.75, "fear": 0.85, "joy": 0.0, "shy": 0.0, "neutral": 0.0}
+_BROW_DOWN = {"angry": 0.85}
+EMOTION_BROW = {k: round(v * BROW_SCALE, 4) for k, v in _BROW_UP.items()}
+EMOTION_BROW.update({k: -round(v * BROW_SCALE, 4) for k, v in _BROW_DOWN.items()})
+# joy·shy 는 EMOTIONS 에 brow 채널이 아예 없다 — 그 감정의 신호는 입꼬리·볼에 있고
+# 영상 경로는 아직 그 축을 못 쓴다. 억지로 눈썹을 올리면 실시간과 다른 얼굴이 된다.
 
 
 def emotion_exp_delta(emo: str | None, intensity: float = 1.0):

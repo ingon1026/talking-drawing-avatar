@@ -709,7 +709,9 @@ window.AvatarCore = (() => {
       r = inferEmotion(text);
     }
     let prosody = null;
-    if (r && autoEmo) {
+    // 명시 감정(대화 모드 LLM·클릭 반응)은 autoEmo 와 무관하게 적용한다 — 예전엔 autoEmo 가
+    // 꺼져 있으면 넘어온 emotion 까지 무시돼 표정·목소리 톤이 둘 다 사라졌다.
+    if (r && (autoEmo || emotion)) {
       emo.setEmotion(r.emo, r.intensity, false);   // 자동 감정 — 발화 끝나면 중립 복귀
       prosody = voiceProsody(r.emo, r.intensity);
     }

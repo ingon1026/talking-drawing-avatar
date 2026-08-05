@@ -397,9 +397,22 @@ async function speakVideo(text, emotion) {
   let seg = emotion ? { emo: emotion, intensity: 0.9 } : null;
   if (!seg && $("autoEmo").checked) {
     setStatus("감정 분석 중…");
-    try { seg = (await AvatarCore.classifyEmotion(text))[0]; } catch { /* 실패하면 평상시 톤 */ }
+    // classifyEmotion 은 실패 시 null 을 돌려준다 — 그대로 [0] 하면 TypeError 라
+    // 빈 catch 가 삼키고 표정·톤이 통째로 사라진다. 실시간 경로와 같은 규칙 폴백을 탄다.
+    try {
+      const segs = await AvatarCore.classifyEmotion(text);
+      seg = segs ? segs[0] : AvatarCore.inferEmotion(text);
+    } catch { seg = AvatarCore.inferEmotion(text); }
   }
-  if (seg) emo.setEmotion(seg.emo, seg.intensity, !emotion);
+  // 수동 버튼으로 고른 감정이 없으면 그 상태를 이어받는다(영상 경로에서도 버튼이 먹게).
+  // current() 는 {key, level} 을 준다 — inferEmotion 과 형태가 달라 맞춰 넣는다.
+  if (!seg) {
+    const c = emo.current();
+    if (c && c.key && c.key !== "neutral") seg = { emo: c.key, intensity: c.level || 0.9 };
+  }
+  // sticky 는 실시간과 같게 false — 자동 감정은 발화가 끝나면 중립으로 돌아가야 한다.
+  // true 로 두면 hold 가 영구 1 이 되어 followTrack 이 죽고, 캐릭터를 바꿔도 안 풀린다.
+  if (seg) emo.setEmotion(seg.emo, seg.intensity, false);
   const pr = seg ? AvatarCore.voiceProsody(seg.emo, seg.intensity) : {};
   setStatus("영상 만드는 중… (4~5초)");
   const r = await fetch("/api/speak", {
