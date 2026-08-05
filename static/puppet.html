@@ -394,25 +394,23 @@ requestAnimationFrame(render);
 // 스프라이트 워프로는 입이 실제로 벌어지지 않는다 — 벌어진 입의 픽셀이 그림에 없어서
 // 만들어 넣어야 하고, 만든 구강은 어떤 모양이든 원본과 겉돈다(여러 번 실측).
 // JoyVASA 는 이·혀·구강을 화풍에 맞게 생성한다. 대신 웜 4~5초가 걸린다.
+// 감정 → 목소리 톤 표(intensity 1 기준). 서버가 감정을 판정하는 경로에서 같이 보낸다 —
+// 값은 avatar_core.js VOICE_STYLE 이 단일 출처고, 파이썬에 다시 적으면 갈라진다.
+const PROSODY_TABLE = Object.fromEntries(
+  Object.keys(AvatarCore.EMOTIONS).map(k => [k, AvatarCore.voiceProsody(k, 1)]));
+
 async function speakVideo(text, emotion) {
-  // 감정을 먼저 판정해 목소리 톤에 싣는다 — TTS 요청 파라미터라 오디오를 만들기 전에
-  // 알아야 한다. 톤이 바뀐 오디오를 JoyVASA 가 먹으므로 표정·머리 움직임도 따라온다.
-  let seg = emotion ? { emo: emotion, intensity: 0.9 } : null;
-  if (!seg && $("autoEmo").checked) {
-    setStatus("감정 분석 중…");
-    // classifyEmotion 은 실패 시 null 을 돌려준다 — 그대로 [0] 하면 TypeError 라
-    // 빈 catch 가 삼키고 표정·톤이 통째로 사라진다. 실시간 경로와 같은 규칙 폴백을 탄다.
-    try {
-      const segs = await AvatarCore.classifyEmotion(text);
-      seg = segs ? segs[0] : AvatarCore.inferEmotion(text);
-    } catch { seg = AvatarCore.inferEmotion(text); }
-  }
   // 수동 버튼으로 고른 감정이 없으면 그 상태를 이어받는다(영상 경로에서도 버튼이 먹게).
   // current() 는 {key, level} 을 준다 — inferEmotion 과 형태가 달라 맞춰 넣는다.
+  let seg = emotion ? { emo: emotion, intensity: 0.9 } : null;
   if (!seg) {
     const c = emo.current();
     if (c && c.key && c.key !== "neutral") seg = { emo: c.key, intensity: c.level || 0.9 };
   }
+  // 감정을 모르면 **여기서 판정하지 않는다.** 예전엔 /api/emotion 을 먼저 치고 그 결과로
+  // 프로소디를 정해 /api/speak 을 불렀는데, 판정(≈0.39s)이 TTS(≈0.56s) 앞에 통째로
+  // 직렬로 붙었다. 서버가 판정과 TTS 를 동시에 돌리고 톤은 사후에 입힌다.
+  const auto = !seg && $("autoEmo").checked;
   // sticky 는 실시간과 같게 false — 자동 감정은 발화가 끝나면 중립으로 돌아가야 한다.
   // true 로 두면 hold 가 영구 1 이 되어 followTrack 이 죽고, 캐릭터를 바꿔도 안 풀린다.
   if (seg) emo.setEmotion(seg.emo, seg.intensity, false);
@@ -424,6 +422,7 @@ async function speakVideo(text, emotion) {
     body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value,
                            rate: pr.rate || 0, pitch: pr.pitch || 0, volume: pr.volume || 0,
                            emotion: seg ? seg.emo : null, intensity: seg ? seg.intensity : 1,
+                           auto_emo: auto, prosody_table: auto ? PROSODY_TABLE : null,
                            // 자동 깜빡임 체크박스를 영상에도 반영 — 안 넘기면 서버 기본값(4초)이
                            // always-on 이라 체크를 꺼도 영상 속 캐릭터는 계속 깜빡였다.
                            blink_interval: $("autoBlink").checked ? 4.0 : 0 }),
@@ -441,6 +440,8 @@ async function speakVideo(text, emotion) {
   for (let i = 0; i < 150; i++) {
     const j = await fetch(`/api/jobs/${job_id}`).then(x => x.json());
     if (j.status === "done") {
+      // 서버가 판정한 감정으로 2D 표정 상태를 맞춘다(캐릭터를 스프라이트로 바꿨을 때 이어지게).
+      if (j.emotion && j.emotion !== "neutral") emo.setEmotion(j.emotion, 0.9, false);
       // 저장은 완성본 파일로 — 스트림 URL 은 chunked 라 다운로드에 안 맞는다.
       // 서버는 24시간 뒤 지운다(purge_old_media).
       const a = $("saveVid"), name = $("character").selectedOptions[0].text;

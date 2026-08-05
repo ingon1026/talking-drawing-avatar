@@ -60,6 +60,12 @@ class SpeakReq(BaseModel):
     volume: float = 0.0
     emotion: str | None = None      # 표정(눈썹)용 감정 라벨
     intensity: float = 1.0
+    # auto_emo: 감정을 서버가 판정한다. 그러면 판정(≈0.39s)을 TTS(≈0.56s)와 겹쳐 돌릴 수
+    # 있다 — 클라이언트가 먼저 /api/emotion 을 치면 그 시간이 통째로 직렬로 붙는다.
+    # prosody_table: {감정: {rate,pitch,volume}} 를 intensity 1 기준으로 받는다. 값 자체는
+    # avatar_core.js VOICE_STYLE 이 단일 출처 — 파이썬에 다시 적으면 갈라진다.
+    auto_emo: bool = False
+    prosody_table: dict[str, dict[str, float]] | None = None
 
 
 class SpeakRtReq(BaseModel):
@@ -116,6 +122,58 @@ def tts_to_wav(text: str, voice: str, wav: Path, keep_mp3: bool = False, prosody
     return marks
 
 
+_VOICE_F0: dict[str, float] = {}
+
+
+def _base_f0(voice: str, wav: Path) -> float:
+    """음성의 기본 F0(Hz). 첫 합성본에서 한 번만 재고 캐시한다.
+
+    edge-tts 의 pitch 는 **비율이 아니라 절대 Hz 오프셋**(`+16Hz`)이라, 그걸 리샘플
+    배율로 바꾸려면 기준 F0 가 필요하다. 음성별 상수표를 박으면 음성이 바뀔 때 조용히
+    틀리므로 실제 오디오에서 뽑는다. pyin 은 162ms 지만 음성당 1회라 요청 비용은 0.
+    """
+    if voice not in _VOICE_F0:
+        import librosa
+        import numpy as np
+        y, sr = librosa.load(str(wav), sr=16000)
+        f0, _, _ = librosa.pyin(y, fmin=60, fmax=400, sr=sr)
+        v = f0[np.isfinite(f0)]
+        _VOICE_F0[voice] = float(np.median(v)) if len(v) else 160.0
+    return _VOICE_F0[voice]
+
+
+def _prosody_filter(p: dict, f0: float, sr: int = 16000) -> str:
+    """SSML 프로소디와 같은 효과를 내는 ffmpeg 필터 체인 (없으면 빈 문자열).
+
+    asetrate 로 피치를 올리면 속도까지 같이 변하므로 atempo 로 되돌리고 거기에 rate 를
+    곱한다. 실측(surprise, 배율 1.142)에서 spectral centroid 비가 1.072 로 배율에 한참
+    못 미쳐 포먼트 이동(chipmunk)은 관측되지 않았다 — Hz 오프셋이 ±6~22Hz 로 작아서다.
+    """
+    q = (f0 + 100 * p.get("pitch", 0.0)) / f0
+    tempo = (1 + p.get("rate", 0.0)) / q
+    chain = []
+    if abs(q - 1) > 1e-3:
+        chain += [f"asetrate={sr}*{q:.6f}", f"aresample={sr}"]
+    if abs(tempo - 1) > 1e-3:
+        chain.append(f"atempo={tempo:.6f}")
+    vol = p.get("volume", 0.0)
+    if abs(vol) > 1e-3:
+        # SSML `+15%` 의 실측 RMS 배율은 1.138 — 나이브한 1.15 가 아니다. 그 한 점으로 선형화.
+        chain.append(f"volume={1 + vol * 0.92:.4f}")
+    return ",".join(chain)
+
+
+def _apply_prosody(wav: Path, p: dict, voice: str):
+    """이미 만들어진 중립 wav 에 프로소디를 입힌다 (제자리 교체, ~60ms)."""
+    af = _prosody_filter(p, _base_f0(voice, wav))
+    if not af:
+        return
+    tmp = wav.with_suffix(".pros.wav")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-af", af,
+                    "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(tmp)], check=True)
+    tmp.replace(wav)
+
+
 _NONWORD = re.compile(r"[^\w]", re.UNICODE)
 
 
@@ -143,8 +201,40 @@ def run_video_job(job_id: str, job: dict):
     req = job["req"]
     job["status"] = "tts"
     wav = OUT / f"{job_id}.wav"
-    tts_to_wav(req.text, req.voice, wav,
-               prosody={"rate": req.rate, "pitch": req.pitch, "volume": req.volume})
+    emotion, intensity = req.emotion, req.intensity
+    if req.auto_emo and not req.emotion:
+        # 감정 판정과 TTS 를 동시에 돌린다. 직렬로 두면 판정(≈0.39s)이 끝나야 SSML
+        # 프로소디를 정할 수 있어 통째로 대기 시간이다. 중립으로 합성해 두고 판정이
+        # 오면 같은 값을 ffmpeg 로 입힌다 — 체감 대기가 그만큼 줄어든다.
+        got = {}
+
+        def classify():
+            try:
+                import llm_source
+                s = llm_source.split_sentences(req.text)
+                labs = llm_source.classify_cached(tuple(s)) if s else None
+                if labs:
+                    got["lab"] = labs[0]
+            except Exception:
+                # 판정 실패는 중립으로 진행한다 — 영상 자체는 나와야 한다.
+                # ponytail: 예전 클라이언트는 여기서 규칙 폴백(inferEmotion)을 탔지만,
+                # 실측 8문장 중 7문장이 기권(발화한 1문장만 정답)이라 사실상 중립과 같다.
+                pass
+
+        th = threading.Thread(target=classify)
+        th.start()
+        tts_to_wav(req.text, req.voice, wav)      # 중립 프로소디로 즉시 합성
+        th.join()
+        lab = got.get("lab")
+        if lab:
+            emotion, intensity = lab["emo"], lab["intensity"]
+            row = (req.prosody_table or {}).get(emotion) or {}
+            _apply_prosody(wav, {k: v * intensity for k, v in row.items()}, req.voice)
+        job["emotion"] = emotion    # 클라이언트가 표정 상태를 맞출 수 있게 알려준다
+    else:
+        # 감정을 이미 안다(수동 버튼 / 감정 자동 꺼짐) — 겹칠 게 없으니 SSML 이 낫다.
+        tts_to_wav(req.text, req.voice, wav,
+                   prosody={"rate": req.rate, "pitch": req.pitch, "volume": req.volume})
 
     # 등록 캐릭터면 그 원본으로 애니메이션. base.png(눈·입 지운 것)가 아니라 source.png 다.
     img_path, do_crop = None, None
@@ -165,7 +255,7 @@ def run_video_job(job_id: str, job: dict):
         from pipeline import emotion_exp_delta
         pipeline.generate(wav, mp4, blink_interval=req.blink_interval,
                           blink_strength=req.blink_strength, image=img_path, do_crop=do_crop,
-                          exp_delta=emotion_exp_delta(req.emotion, req.intensity))
+                          exp_delta=emotion_exp_delta(emotion, intensity))
     finally:
         # 업로드 임시본만 정리한다 — 캐릭터 source.png 는 영구 자산이라 건드리지 않는다.
         if img_path and img_path.exists() and img_path.parent.name == "uploads":
