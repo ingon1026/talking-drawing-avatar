@@ -20,5 +20,6 @@
     "teeth": "#ffffff",
     "width": 28
   },
-  "deletable": true
+  "deletable": true,
+  "video": false
 }
