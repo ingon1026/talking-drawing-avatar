@@ -419,7 +419,10 @@ async function speakVideo(text, emotion) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, voice: $("voice").value, char_id: $("character").value,
                            rate: pr.rate || 0, pitch: pr.pitch || 0, volume: pr.volume || 0,
-                           emotion: seg ? seg.emo : null, intensity: seg ? seg.intensity : 1 }),
+                           emotion: seg ? seg.emo : null, intensity: seg ? seg.intensity : 1,
+                           // 자동 깜빡임 체크박스를 영상에도 반영 — 안 넘기면 서버 기본값(4초)이
+                           // always-on 이라 체크를 꺼도 영상 속 캐릭터는 계속 깜빡였다.
+                           blink_interval: $("autoBlink").checked ? 4.0 : 0 }),
   });
   if (!r.ok) throw new Error("영상 생성 요청 실패");
   const { job_id } = await r.json();
