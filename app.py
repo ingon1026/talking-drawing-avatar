@@ -337,8 +337,13 @@ def rt_result(r: SpeakRtReq, job_id: str) -> dict:
 _last_purge = 0.0
 
 
-def purge_old_media(hours: int = 24):
-    """상시 서비스라 생성 파일이 무한 누적되지 않게 오래된 미디어 정리 (demo_* 제외, 10분 스로틀)."""
+def purge_old_media(hours: int = 1):
+    """상시 서비스라 생성 파일이 무한 누적되지 않게 오래된 미디어 정리 (demo_* 제외, 10분 스로틀).
+
+    1시간: 저장할 거면 그 자리에서 받는다는 전제다. 예전엔 24시간이라 하루치가 통째로
+    쌓였다(실측 126개). **탭을 1시간 넘게 열어 두고 '영상 저장'을 누르면 404 가 난다** —
+    그 대가로 고른 값이다. 길게 붙들고 싶으면 여기만 늘리면 된다.
+    """
     global _last_purge
     import time
     now = time.time()

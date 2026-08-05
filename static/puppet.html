@@ -212,6 +212,12 @@ async function initCharacters(selectId) {
 // 그래서 취소하면 아무 일도 안 일어난 것과 같다.
 function onCharChange() {
   if (isPhoto() && !tempPhoto) { $("character").value = prevChar; $("tempPhotoFile").click(); return; }
+  // 임시 사진을 떠나면 버린다 — "임시" 니까. 다시 고르면 새 사진을 묻는다.
+  // (머무는 동안은 그대로라 같은 사진으로 여러 문장을 말할 수 있다.)
+  if (prevChar === PHOTO && !isPhoto()) {
+    tempPhoto = null;
+    $("photoPrev").removeAttribute("src");   // src="" 로 두면 페이지 URL 을 다시 받는다
+  }
   prevChar = $("character").value;
   applyMode();
 }
@@ -545,7 +551,7 @@ async function speakVideo(text, emotion) {
       // 서버가 판정한 감정으로 2D 표정 상태를 맞춘다(캐릭터를 스프라이트로 바꿨을 때 이어지게).
       if (j.emotion && j.emotion !== "neutral") emo.setEmotion(j.emotion, 0.9, false);
       // 저장은 완성본 파일로 — 스트림 URL 은 chunked 라 다운로드에 안 맞는다.
-      // 서버는 24시간 뒤 지운다(purge_old_media).
+      // 서버는 1시간 뒤 지운다(purge_old_media) — 남길 거면 지금 받아야 한다.
       // 옵션 텍스트를 그대로 쓰면 이모지가 파일명에 들어간다 — 사진 모드는 고정 이름.
       const a = $("saveVid"), name = isPhoto() ? "임시사진" : $("character").selectedOptions[0].text;
       a.href = j.video_url;
