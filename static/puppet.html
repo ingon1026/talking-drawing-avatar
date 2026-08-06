@@ -123,10 +123,13 @@
   <div class="row toggles" id="outMode">
     출력
     <!-- 두 경로의 표현력 차이는 라벨에 다 못 적는다 — 알고 싶은 사람이 볼 수 있게 title 에 둔다.
-         근거: 실시간은 avatar_core.js EMOTIONS(ARKit 채널), 영상은 pipeline.py EMOTION_FACE(눈썹·미소 2축). -->
-    <label title="ARKit 52채널 전부 — 눈웃음(볼·눈꺼풀)과 놀람의 눈 커짐까지 나온다. 시선·고개 아이들 모션 있음.">
+         근거: 실시간은 avatar_core.js EMOTIONS(ARKit 채널), 영상은 pipeline.py EMOTION_FACE(눈썹·미소·눈 3축).
+         **축을 늘리면 이 title 도 같이 고쳐라** — 눈 축을 더했을 때 여기가 "2축뿐, 눈은 안 움직임"
+         으로 남아 거짓 안내가 됐다. README 의 "두 경로" 표도 같은 사실을 적는다. -->
+
+    <label title="ARKit 52채널 전부 — 눈웃음(볼·눈꺼풀)과 시선 내림까지 나온다. 시선·고개 아이들 모션 있음.">
       <input type="radio" name="out" id="modeLive"> 실시간 — 즉시, 입 안 벌어짐</label>
-    <label title="표정은 눈썹·입꼬리 2축뿐 — 눈은 안 움직이고, 슬픔·놀람·무서움은 눈썹 올림 정도로만 갈린다. 아이들 모션 없음.">
+    <label title="표정은 눈썹·입꼬리·눈 크기 3축 — 놀람·무서움은 눈이 커지지만 눈웃음·시선은 없다. 아이들 모션 없음.">
       <input type="radio" name="out" id="modeVideo"> 영상 — 2초, 입 벌어짐</label>
     <span id="modeWhy"></span>
   </div>
