@@ -15,19 +15,11 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
-sys.path.insert(0, "/home/ingon/face")
-from playwright_chromium import launch_kwargs   # noqa: E402
+from _harness import ROOT, TMP, Checks, open_puppet   # noqa: E402 — sys.path 삽입을 겸한다
 
-URL = "http://localhost:8000/puppet"
-OUT = Path("/home/ingon/face/output")
-S = Path(__file__).parent / "_tmp"
-Path(S).mkdir(exist_ok=True)   # 새 클론엔 없다 — git 은 빈 디렉터리를 안 남긴다
-ok, fail = [], []
-
-
-def chk(n, c, e=""):
-    (ok if c else fail).append(n)
-    print(f"  {'PASS' if c else 'FAIL'}  {n}{'   ' + str(e) if e and not c else ''}")
+OUT = ROOT / "output"
+S = TMP
+chk = Checks()
 
 
 # 감정이 확실히 갈리는 세 문장 — 매 회차 다른 문장을 써서 LRU 캐시를 피한다
@@ -63,16 +55,11 @@ def brow_band(mp4, frac):
 
 
 with sync_playwright() as p:
-    b = p.chromium.launch(**launch_kwargs())
-    pg = b.new_page()
-    errs, reqs, cls = [], [], []
-    pg.on("pageerror", lambda e: errs.append(str(e)))
+    b, pg, errs = open_puppet(p)
+    reqs, cls = [], []
     pg.on("request", lambda r: cls.append(r.url) if "/api/emotion" in r.url else None)
     pg.on("request", lambda r: reqs.append(json.loads(r.post_data or "{}"))
           if r.url.endswith("/api/speak") and r.method == "POST" else None)
-    pg.goto(URL)
-    pg.wait_for_function("() => document.querySelector('#character').options.length > 1")
-    pg.wait_for_timeout(800)
     vid = pg.evaluate("() => charList.find(c => c.video).id")
     pg.select_option("#character", vid)
     pg.wait_for_timeout(500)
@@ -151,7 +138,7 @@ with sync_playwright() as p:
 
     print("\n[5] 임시 사진도 연속 2회 (감정이 최대치로 얼지 않는다)")
     pg.set_input_files("#tempPhotoFile",
-                       "/home/ingon/face/JoyVASA/assets/examples/imgs/joyvasa_005.png")
+                       str(ROOT / "JoyVASA/assets/examples/imgs/joyvasa_005.png"))
     pg.wait_for_timeout(1500)
     ph = []
     for i, t in enumerate(TEXTS[:2], 1):
@@ -164,7 +151,4 @@ with sync_playwright() as p:
     chk("페이지 에러 없음", not errs, str(errs))
     b.close()
 
-print(f"\n통과 {len(ok)} / 실패 {len(fail)}")
-if fail:
-    print("실패:", fail)
-    sys.exit(1)
+sys.exit(chk.report())

@@ -1,22 +1,21 @@
 """고친 캐릭터의 입이 실제로 움직이는가 — 발화 중 입 대역 프레임 차분."""
+import io
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
-sys.path.insert(0, "/home/ingon/face")
-from playwright.sync_api import sync_playwright
-from playwright_chromium import launch_kwargs
 from PIL import Image
-import io
-S = str(Path(__file__).parent / "_tmp")
-Path(S).mkdir(exist_ok=True)   # 새 클론엔 없다 — git 은 빈 디렉터리를 안 남긴다
+from playwright.sync_api import sync_playwright
+
+from _harness import Checks, open_puppet   # noqa: E402 — sys.path 삽입을 겸한다
 # 예전엔 캐릭터 5개를 손으로 박아뒀는데 중복 정리로 4개가 사라져 하네스가 통째로 죽었다.
 # 있는 캐릭터를 전부 훑고, **입이 움직여야 하는지를 manifest 에서 계산해** 기대값을 만든다.
 # 게이트는 로더(puppet.html)와 같은 ?? 규칙이어야 한다 — 다르면 하네스가 통과해도 화면은 빈 입이다.
-ROOT = Path("/home/ingon/face/assets_characters")
+CHARS = Path(__file__).resolve().parent.parent.parent / "assets_characters"
 TARGETS = []
-for _d in sorted(ROOT.iterdir()):
-    _m = __import__("json").loads((_d / "manifest.json").read_text())
+for _d in sorted(CHARS.iterdir()):
+    _m = json.loads((_d / "manifest.json").read_text())
     _gate = _m.get("mouthErased")
     if _gate is None:
         _gate = _m.get("proceduralMouth")
@@ -26,17 +25,10 @@ for _d in sorted(ROOT.iterdir()):
     # 상자가 몸통에 떨어져서, 입이 멀쩡히 벌어지는데도 "정지" 로 읽혔다.
     _mc = _m.get("mouthCenter") or [256, 256]
     TARGETS.append((_d.name, bool(_gate) or _sprite, _mc))   # True = 입이 움직여야 한다
-ok, fail = [], []
-def chk(n, c, e=""):
-    (ok if c else fail).append(n); print(f"  {'PASS' if c else 'FAIL'}  {n}{'   '+str(e) if e and not c else ''}")
+chk = Checks()
 
 with sync_playwright() as p:
-    b = p.chromium.launch(**launch_kwargs())
-    pg = b.new_page(); errs = []
-    pg.on("pageerror", lambda e: errs.append(str(e)))
-    pg.goto("http://localhost:8000/puppet")
-    pg.wait_for_function("() => document.querySelector('#character').options.length > 1")
-    pg.wait_for_timeout(700)
+    b, pg, errs = open_puppet(p)
     for cid, should_move, mc in TARGETS:
         pg.select_option("#character", cid); pg.wait_for_timeout(1200)
         pg.click("#modeLive"); pg.wait_for_timeout(500)
@@ -69,5 +61,4 @@ with sync_playwright() as p:
             chk(f"{cid} 입 정지 (설계대로, 이중 입 없음)", not moved, d)
     chk("JS 에러 0", not errs, str(errs))
     b.close()
-print(f"\n통과 {len(ok)} / 실패 {len(fail)}")
-sys.exit(1 if fail else 0)
+sys.exit(chk.report())

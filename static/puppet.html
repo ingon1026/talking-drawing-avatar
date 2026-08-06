@@ -155,6 +155,13 @@ const glCanvas = $("gl"), shakeEl = $("shake"), warpToggle = $("warpToggle");
 const setStatus = AvatarCore.bindStatus($("status"));
 
 // ---------- 캐릭터 에셋 로드 (파일명 규칙 기반) ----------
+// 벡터 입을 그릴 캐릭터인가. **한 줄이지만 반드시 한 곳이어야 한다** — 로더 경고와 렌더
+// 분기가 각자 적고 있었고, 예전에 로더 쪽만 `!proceduralMouth` 로 남아 u_4e6992(선언
+// true + 실측 false)가 이중 입인데 경고도 안 뜨는 상태였다. 규칙의 근거는 렌더 쪽 주석에.
+// (tests/e2e/mouth_moves.py 가 파이썬으로 같은 규칙을 재현한다 — 언어가 달라 못 합친다.
+//  거기가 갈라지면 "하네스는 통과하는데 화면은 정지 입" 이 된다. 고칠 땐 같이 고칠 것.)
+const vectorMouth = m => m.mouthErased ?? m.proceduralMouth;
+
 const PART_FILES = ["base", "brow_L", "brow_R", "eye_L_open", "eye_R_open",
   "eye_L_closed", "eye_R_closed", "pupil_L", "pupil_R",
   "mouth_closed", "mouth_M", "mouth_A", "mouth_E", "mouth_I", "mouth_O", "mouth_U",
@@ -204,7 +211,7 @@ async function loadCharacter(id) {
   // 안 뜨는 상태였고, 그래서 진단에서도 10번째 캐릭터만 조용히 빠졌다.
   // (mouthErased 가 true 면 아래 게이트가 벡터 입을 그리므로 여기 들어오지 않는다 —
   //  남는 건 "false 라 못 그린다" 와 "키가 없어 못 그린다" 둘뿐이다.)
-  if (!(manifest.mouthErased ?? manifest.proceduralMouth) && !loaded.mouth_lips && !spriteMouth) {
+  if (!vectorMouth(manifest) && !loaded.mouth_lips && !spriteMouth) {
     if (manifest.mouthErased === undefined)
       console.error(`[puppet] ${id}: manifest 에 mouthErased 가 없어 입이 정지합니다 — `
         + "빌더가 이 키를 안 썼거나 마이그레이션이 안 됐습니다. "
@@ -633,7 +640,7 @@ function render(now) {
   // `||` 가 아니라 `??` 인 이유: u_4e6992 는 선언은 procedural(true) 인데 실측은 안 지워짐
   // (false) 이다 — 과거 빌더가 만든 모순 쌍이고, `||` 면 선언이 이겨 이중 입이 그대로 남는다.
   // 실측이 선언을 이겨야 한다. 키가 아예 없는 캐릭터만 선언으로 폴백한다.
-  if (!mouthDrawn && (manifest.mouthErased ?? manifest.proceduralMouth))
+  if (!mouthDrawn && vectorMouth(manifest))
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);                    // 근육 채널 직접 구동 (기본)
 }
 requestAnimationFrame(render);

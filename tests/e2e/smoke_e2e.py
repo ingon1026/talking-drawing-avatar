@@ -7,21 +7,13 @@
 import json
 import sys
 import urllib.request
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-sys.path.insert(0, "/home/ingon/face")
-from playwright_chromium import launch_kwargs   # noqa: E402
+from _harness import Checks, open_puppet, ROOT   # noqa: E402 — sys.path 삽입을 겸한다
 
-URL = "http://localhost:8000/puppet"
-IMG = "/home/ingon/face/JoyVASA/assets/examples/imgs/joyvasa_005.png"
-ok, fail = [], []
-
-
-def chk(n, c, e=""):
-    (ok if c else fail).append(n)
-    print(f"  {'PASS' if c else 'FAIL'}  {n}{'   ' + str(e) if e and not c else ''}")
+IMG = str(ROOT / "JoyVASA/assets/examples/imgs/joyvasa_005.png")
+chk = Checks()
 
 
 def state(pg):
@@ -38,13 +30,7 @@ def state(pg):
 
 
 with sync_playwright() as p:
-    b = p.chromium.launch(**launch_kwargs())
-    pg = b.new_page()
-    errs = []
-    pg.on("pageerror", lambda e: errs.append(str(e)))
-    pg.goto(URL)
-    pg.wait_for_function("() => document.querySelector('#character').options.length > 1")
-    pg.wait_for_timeout(800)
+    b, pg, errs = open_puppet(p)
     chars = pg.evaluate("() => charList")
     vid = next(c["id"] for c in chars if c["video"])
     novid = next(c["id"] for c in chars if not c["video"])
@@ -104,7 +90,4 @@ with sync_playwright() as p:
     chk("페이지 에러 없음", not errs, str(errs))
     b.close()
 
-print(f"\n통과 {len(ok)} / 실패 {len(fail)}")
-if fail:
-    print("실패:", fail)
-    sys.exit(1)
+sys.exit(chk.report())

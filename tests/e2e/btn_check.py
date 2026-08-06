@@ -1,25 +1,21 @@
 """버튼 하이라이트가 '다음 발화에 보낼 감정'과 일치하는가."""
-import json, sys
+import json
+import sys
+
 from playwright.sync_api import sync_playwright
-sys.path.insert(0, "/home/ingon/face")
-from playwright_chromium import launch_kwargs
-ok, fail = [], []
-def chk(n, c, e=""):
-    (ok if c else fail).append(n); print(f"  {'PASS' if c else 'FAIL'}  {n}{'   '+str(e) if e and not c else ''}")
+
+from _harness import Checks, open_puppet   # noqa: E402 — sys.path 삽입을 겸한다
+
+chk = Checks()
 def lit(pg):
     return pg.evaluate("""() => [...document.querySelectorAll('#emotions button')]
         .filter(b => b.style.background && b.style.background.includes('91, 140, 255'))
         .map(b => b.dataset.emo)""")
 with sync_playwright() as p:
-    b = p.chromium.launch(**launch_kwargs())
-    pg = b.new_page(); errs=[]
-    pg.on("pageerror", lambda e: errs.append(str(e)))
+    b, pg, errs = open_puppet(p)
     reqs=[]
     pg.on("request", lambda r: reqs.append(json.loads(r.post_data or "{}"))
           if r.url.endswith("/api/speak") and r.method=="POST" else None)
-    pg.goto("http://localhost:8000/puppet")
-    pg.wait_for_function("() => document.querySelector('#character').options.length > 1")
-    pg.wait_for_timeout(800)
     pg.select_option("#character", pg.evaluate("() => charList.find(c => c.video).id"))
     pg.wait_for_timeout(400); pg.check("#autoEmo")
     def say(t):
@@ -49,5 +45,4 @@ with sync_playwright() as p:
     chk("자동 발화 뒤에도 안 켜짐", lit(pg) == [], lit(pg))
     chk("JS 에러 0", not errs, str(errs))
     b.close()
-print(f"\n통과 {len(ok)} / 실패 {len(fail)}")
-sys.exit(1 if fail else 0)
+sys.exit(chk.report())
