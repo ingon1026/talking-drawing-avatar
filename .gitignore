@@ -22,3 +22,4 @@ static/assets3d/
 # 영영 못 쓴다 — 스프라이트는 base.png 로 남지만 원본은 재생성이 불가능하다.
 assets_characters/*/source.png
 tests/e2e/_tmp/
+.trash_characters/
