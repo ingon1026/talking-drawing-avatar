@@ -275,20 +275,35 @@ def run_video_job(job_id: str, job: dict):
                 # 실측 8문장 중 7문장이 기권(발화한 1문장만 정답)이라 사실상 중립과 같다.
                 # 다만 조용히 넘기지는 않는다 — 전이 의존성(requests 등)이 빠지면 증상이
                 # "감정이 항상 중립" 뿐이라 원인을 못 찾는다. _llm() 이 존재하는 이유와 같다.
-                print(f"[video] 감정 판정 건너뜀 ({type(e).__name__}: {e}) — 중립으로 진행")
+                got["error"] = f"감정 판정 실패 — 중립으로 진행 ({type(e).__name__}: {e})"
+                print(f"[video] {got['error']}")
 
         th = threading.Thread(target=classify)
         th.start()
         marks = tts_to_wav(req.text, req.voice, wav)   # 중립 프로소디로 즉시 합성
         th.join()
         labs = got.get("labs")
+        if got.get("error"):
+            # 서버 로그에만 있으면 화면엔 아무 표시가 없다 — 자동 감정을 켰는데 표정도
+            # 목소리 톤도 안 나오는 이유를 사용자가 알 수 있게 잡 상태에 싣는다.
+            # 잡은 실패가 아니다(영상은 중립으로 정상 완성된다) — status 는 건드리지 않는다.
+            job["emotion_error"] = got["error"]
         if labs:
             emotion, intensity = labs[0]["emo"], labs[0]["intensity"]
             # 문장마다 표정을 바꾼다 — 시작 시각은 TTS 단어 마크에서 복원한다.
             # 목소리 톤은 못 나눈다(프로소디는 발화 하나에 하나) — 아래는 첫 문장 것이다.
-            starts = sentence_starts(got["sentences"], marks)
-            segments = [(t, g["emo"], g["intensity"])
-                        for t, g in zip(starts, got["labs"])]
+            if len(got["sentences"]) == len(labs):
+                starts = sentence_starts(got["sentences"], marks)
+                segments = [(t, g["emo"], g["intensity"])
+                            for t, g in zip(starts, labs)]
+            else:
+                # zip 은 짧은 쪽에 맞춰 조용히 자른다 — 뒷문장이 아무 표시 없이 표정을
+                # 잃거나(라벨이 짧을 때) 엉뚱한 문장 시각에 붙는다. 실시간 경로와 같게
+                # (avatar_core.js speakWithEmotion) 트랙을 통째로 버리고 첫 문장 감정만
+                # 통짜로 쓴다. llm_source.classify 가 개수 불일치를 RuntimeError 로 막으니
+                # 여기 걸리면 그 불변식이 깨진 것이다 — 그래서 로그를 남긴다.
+                print(f"[video] 문장 {len(got['sentences'])}개 ≠ 감정 {len(labs)}개 — "
+                      "문장별 표정을 버리고 첫 문장 감정으로 진행")
             row = (req.prosody_table or {}).get(emotion)
             if row:
                 # 요청 음성이 아니라 **실제 합성에 쓰인** 음성으로 F0 를 잡아야 한다.

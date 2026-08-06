@@ -40,27 +40,43 @@ BROW_SCALE = 0.035                        # ±0.03 이 화면에서 뚜렷하고
 # 그래서 14·17·20 을 써도 된다. s=+0.5 가 안전 상한: +1.0 이면 닫힌 비제마에 치아가 샌다.
 SMILE = ((20, 1, -0.01), (14, 1, -0.02), (17, 1, 0.0065), (17, 2, 0.003),
          (13, 1, -0.00275), (16, 1, -0.00275), (3, 1, -0.0035), (7, 1, -0.0035))
-SMILE_MAX = 0.5
+SMILE_MAX = 0.5   # 아래 표에 **이미 접어 넣었다** — 곱셈 경로가 아니라 표의 상한이다
 
-# 감정별 (눈썹 올림 정도, 미소 정도). 부호·크기는 avatar_core.js EMOTIONS 와 맞춘다.
+# 감정별 (눈썹 올림 정도, 미소 정도) — 둘 다 그 축의 **최종 크기**다(intensity 만 더 곱한다).
+# 예전엔 미소만 여기서 한 번 더 SMILE_MAX 를 곱했다. 두 축의 단위가 달라져서(눈썹은
+# 최종값, 미소는 "상한의 몇 배") 표를 읽고 크기를 가늠할 수가 없었고, 실시간 경로의
+# emotion[k] = base[k] * intensity (avatar_core.js) 와도 식이 어긋났다. 상한은 표에
+# 접어 넣어 지키고(joy 0.5 = 예전 1.0×SMILE_MAX), 곱셈은 intensity 하나로 남긴다.
+#
 # 음수 미소는 "오므림(뾰로통)"이지 찡그림이 아니고 입 벌림과 싸운다 — 찡그림은
 # 눈썹 내림으로만 표현한다(실측: -0.5 면 열린 비제마가 닫힌 입술로 뭉개진다).
+#
+# **avatar_core.js EMOTIONS 의 사본이 아니다.** 옆의 채널 이름은 출처 표시일 뿐,
+# 자동으로 따라오지 않는다. 눈썹은 값이 마침 1:1 이지만(내림인 angry 만 부호를 뒤집는다)
+# 어느 채널을 읽을지는 판단이 들어간다 — surprise 는 EMOTIONS 에 browinnerup 0.6 과 browouterup
+# 0.75 가 같이 있는데 여기선 outer 를 골랐다. 미소는 비례하지도 않는다(0.55→0.5,
+# 0.3→0.2). 단위도 ARKit 채널이 아니라 LivePortrait exp 축 계수라 렌더를 봐야 검증된다.
+# EMOTIONS 를 고쳤으면 여기도 손으로 고치고 영상을 눈으로 볼 것.
 EMOTION_FACE = {
     "neutral":  (0.0,  0.0),
-    "joy":      (0.0,  1.0),    # EMOTIONS.joy 는 brow 채널이 없고 mouthsmile 0.55
+    "joy":      (0.0,  0.5),    # EMOTIONS.joy 는 brow 채널이 없고 mouthsmile 0.55
     "sad":      (0.7,  0.0),    # browinnerup 0.7
     "angry":   (-0.85, 0.0),    # browdown 0.85
     "surprise": (0.75, 0.0),    # browouterup 0.75
     "fear":     (0.85, 0.0),    # browinnerup 0.85
-    "shy":      (0.0,  0.4),    # mouthsmile 0.3 — 옅은 미소
+    "shy":      (0.0,  0.2),    # mouthsmile 0.3 — 옅은 미소
 }
 
 
 def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
     """감정 라벨 → (21,3) 표정 델타. 없거나 중립이면 None(주입 안 함)."""
+    if emo and emo not in EMOTION_FACE:
+        # 조용히 중립이 되면 증상이 "그 감정만 표정이 안 나옴" 뿐이라 아무도 못 찾는다.
+        # EMOTIONS 에 감정을 하나 더한 뒤 여기 안 더하면 바로 이 상태가 된다.
+        print(f"[pipeline] EMOTION_FACE 에 없는 감정 '{emo}' — 표정 없이(중립) 진행")
     brow, smile = EMOTION_FACE.get(emo or "neutral", (0.0, 0.0))
     k = max(0.0, min(1.0, intensity))
-    brow, smile = brow * k, smile * k * SMILE_MAX
+    brow, smile = brow * k, smile * k
     if abs(brow) < 1e-3 and abs(smile) < 1e-3:
         return None
     import numpy as np
@@ -439,6 +455,12 @@ if __name__ == "__main__":
     half = make_blink_schedule(100, 2.0, 0.5)
     assert abs(half[51] - 0.15) < 1e-9                   # 강도 0.5 = 반감김
     print("blink schedule self-check OK")
+
+    # 표정 크기 (GPU 불필요). 아래 스케줄 검증은 양변이 같은 함수를 지나서 표의 절대
+    # 크기를 못 잡는다 — joy 를 0.05 로 잘못 접어 넣어도 전부 통과한다. 그래서 한 점을 박는다.
+    assert abs(emotion_exp_delta("joy", 1.0)[20, 1] + 0.005) < 1e-9   # 상한 접어넣기 전과 동일
+    assert all(abs(s) <= SMILE_MAX for _, s in EMOTION_FACE.values()), "미소가 안전 상한을 넘었다"
+    print("emotion magnitude self-check OK")
 
     # 문장별 표정 스케줄 (GPU 불필요)
     sch = emotion_exp_schedule([(0.0, "joy", 1.0), (2.0, "angry", 1.0)], 100, 25)

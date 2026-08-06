@@ -28,6 +28,7 @@
   /* 영상과 임시 사진 미리보기는 #stageVid 한 자리를 번갈아 쓴다 — 같은 규칙을 공유해야 갈리지 않는다 */
   #vid, #photoPrev { width: 100%; height: 100%; display: block; object-fit: contain; }
   #photoPrev { cursor: pointer; }   /* 클릭하면 다른 사진으로 바꾼다 */
+  #vid { cursor: pointer; }         /* 2D 스테이지와 같게 — 눌러서 말 걸기 */
   form { display: flex; gap: 8px; margin-top: 16px; }
   input[type=text] {
     flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a35;
@@ -48,6 +49,9 @@
   .toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   /* 비활성 라디오는 button:disabled 와 같은 톤으로 죽인다 (원본 없는 캐릭터는 영상 불가) */
   .toggles label:has(:disabled) { color: #666; cursor: default; }
+  /* 잠긴 라디오의 이유 — 회색 라디오만 두면 고장으로 보인다. 한 줄을 통째로 차지해 라벨을 안 밀어낸다 */
+  #modeWhy { flex-basis: 100%; color: #767888; }
+  #modeWhy:empty { display: none; }
   #emotions button { padding: 0 12px; }
   #status { margin-top: 12px; color: #9a9ab0; font-size: .9rem; min-height: 1.2em; }
   #status.error { color: #ff7a7a; }
@@ -118,8 +122,13 @@
   <!-- checked 는 마크업에 안 넣는다 — 초기 상태의 단일 출처는 applyMode() 다 -->
   <div class="row toggles" id="outMode">
     출력
-    <label><input type="radio" name="out" id="modeLive"> 실시간 — 즉시, 입 안 벌어짐</label>
-    <label><input type="radio" name="out" id="modeVideo"> 영상 — 2초, 입 벌어짐</label>
+    <!-- 두 경로의 표현력 차이는 라벨에 다 못 적는다 — 알고 싶은 사람이 볼 수 있게 title 에 둔다.
+         근거: 실시간은 avatar_core.js EMOTIONS(ARKit 채널), 영상은 pipeline.py EMOTION_FACE(눈썹·미소 2축). -->
+    <label title="ARKit 52채널 전부 — 눈웃음(볼·눈꺼풀)과 놀람의 눈 커짐까지 나온다. 시선·고개 아이들 모션 있음.">
+      <input type="radio" name="out" id="modeLive"> 실시간 — 즉시, 입 안 벌어짐</label>
+    <label title="표정은 눈썹·입꼬리 2축뿐 — 눈은 안 움직이고, 슬픔·놀람·무서움은 눈썹 올림 정도로만 갈린다. 아이들 모션 없음.">
+      <input type="radio" name="out" id="modeVideo"> 영상 — 2초, 입 벌어짐</label>
+    <span id="modeWhy"></span>
   </div>
 
   <div class="row toggles">
@@ -224,7 +233,12 @@ async function initCharacters(selectId) {
   const list = await fetch("/api/characters").then(r => r.json());
   charList = list;
   const sel = $("character");
-  sel.innerHTML = list.map(c => `<option value="${c.id}">${c.name}</option>`).join("")
+  // 영상이 안 되는 캐릭터를 **고르기 전에** 알 수 있게 표시한다 — 예전엔 고른 뒤 회색 라디오가
+  // 유일한 신호였다. 이름은 도움이 안 된다("내 캐릭터" 가 17개다). 못 하는 쪽만 찍는다(29개 중 10개)
+  // — 다 찍으면 목록이 표시로 뒤덮인다. 여기 표시는 캐릭터 자체의 능력이고, 엔진이 꺼져 다 같이
+  // 막힌 경우는 #modeWhy 가 말한다(둘을 뭉치면 표시가 서버 상태에 따라 흔들린다).
+  sel.innerHTML = list.map(c =>
+    `<option value="${c.id}">${c.name}${c.video ? "" : " — 실시간만"}</option>`).join("")
     // JoyVASA 가 없으면 사진으로 할 수 있는 게 없다 — 옵션을 넣지 않는다.
     // (최초 호출은 health 전이라 낙관값 true 로 들어가고, health 가 아니면 그때 지운다)
     + (joyvasaReady ? `<option value="${PHOTO}">📷 임시 사진 (등록 없이)</option>` : "")
@@ -290,6 +304,20 @@ function showStage(which) {   // "2d" | "3d" | "photo" | "video"
   $("vid").style.display = which === "video" ? "" : "none";
 }
 
+// 잠긴 라디오의 이유 한 줄. 서버는 video 를 boolean 하나로만 내려줘서 "얼굴 검출 실패" 와
+// "원본이 없는 내장 캐릭터" 를 구분해 주지 않는다 — deletable 로 가른다(등록 캐릭터만 true 이고,
+// 등록 경로만 얼굴 검출을 돌린다). 서버가 사유를 내려주면 이 추론은 지워도 된다.
+// joyvasaReady 를 charList 조회보다 **먼저** 본다: 엔진이 없으면 📷 도 여기로 오는데,
+// 임시 사진은 charList 에 없어서 "내장 캐릭터" 로 잘못 읽힌다.
+function videoWhy() {
+  if (is3D()) return "석고상은 3D 모프로 직접 말합니다 — 영상 경로가 없습니다.";
+  if (!joyvasaReady) return "영상 엔진(JoyVASA)이 꺼져 있어 실시간만 됩니다.";
+  const c = charList.find(c => c.id === $("character").value);
+  return c && c.deletable
+    ? "이 그림은 등록할 때 얼굴 검출이 안 돼 영상을 만들 수 없습니다."
+    : "내장 캐릭터는 원본 그림이 없어 영상을 만들 수 없습니다.";
+}
+
 // 모드 전환: 스테이지 표시/숨김 + 해당 모드의 에셋 로드. 드롭다운 변경과 초기 진입이 같은 경로를 탄다.
 async function applyMode() {
   const on3d = is3D(), onPhoto = isPhoto();
@@ -309,9 +337,17 @@ async function applyMode() {
   $("modeLive").disabled = !canLive();
   $("modeVideo").checked = useVid;
   $("modeLive").checked = !useVid;
+  // 잠근 쪽의 이유를 그 자리에 적는다. 둘 다 잠기는 조합은 없다(사진은 영상이 되고, 영상이
+  // 막히면 실시간이 된다) — 그래도 영상 쪽을 먼저 본다, 그게 사용자가 놓친 쪽이라.
+  $("modeWhy").textContent = !canVideo() ? videoWhy()
+    : !canLive() ? "임시 사진은 눈·입 파츠가 없어 실시간이 안 됩니다 — 영상만 됩니다." : "";
   // 엔진 셀렉트는 실시간 경로에서만 읽힌다 — 영상일 땐 "~0.5초" 라벨이 거짓말이라 감춘다.
   // disabled 가 아니라 hidden 인 이유가 그것이다(회색이어도 텍스트는 읽힌다).
   $("engine").style.display = useVid ? "none" : "";
+  // 얼굴 워핑도 같은 이유로 감춘다 — 읽는 곳이 2D 렌더 루프 한 군데뿐인데 3D·사진은 그 앞에서
+  // return 한다. 조건이 엔진 셀렉트와 다른 건 죽는 자리가 다르기 때문이다(엔진은 영상일 때 죽고,
+  // 워핑은 영상 모드의 유휴 2D 화면에선 멀쩡히 산다 — 감정 워프가 눈에 보인다).
+  warpToggle.closest("label").style.display = (on3d || onPhoto) ? "none" : "";
   // 에셋은 캐릭터가 실제로 바뀐 경우에만 다시 받는다. 출력 라디오도 applyMode 를 타는데
   // 실시간/영상 선택은 스프라이트 파츠와 무관하다 — 무조건 다시 받으면 클릭마다
   // manifest 1 + png 최대 17건(있는 파츠가 8장이면 9건은 404, 404 는 캐시가 안 된다)이
@@ -414,14 +450,20 @@ stage.addEventListener("dragover", e => e.preventDefault());
 stage.addEventListener("drop", e => { e.preventDefault(); annotator.acceptFile(e.dataTransfer.files[0]); });
 // 캐릭터 클릭 반응: 아바타를 누르면 감정 섞인 한마디
 stage.style.cursor = "pointer";
-stage.addEventListener("click", () => {
+function clickReaction() {
   if (annotator.active()) return;   // 4클릭 어노테이션 중엔 좌표 클릭이라 제외
   const r = AvatarCore.pickReaction();
   emo.setEmotion(r.emo, 0.95, false);
   syncEmoButtons();   // 클릭 반응도 setEmotion 을 타 버튼을 켠다 — 수동 고정이 아니다
   setStatus("💬 " + r.text);
   speak(r.text, r.emo);
-});
+}
+stage.addEventListener("click", clickReaction);
+// 영상 스테이지에서도 먹게 한다 — showStage("video") 가 #stage2d 를 닫아서, 영상을 한 번 보고 나면
+// 캐릭터/라디오를 바꾸기 전까지 클릭이 죽어 있었다. 커서만 바꿔 "안 먹는다"를 보이게 하는 쪽은
+// 안 골랐다: 클릭 반응은 speak() 를 부를 뿐이고 speak() 은 영상 경로로도 잘 간다 — 못 할 이유가 없다.
+// #stageVid 가 아니라 #vid 에 다는 이유는 형제인 #photoPrev 가 "사진 바꾸기" 를 이미 쓰고 있어서다.
+$("vid").addEventListener("click", clickReaction);
 $("addChar").onclick = () => $("charFile").click();
 $("charFile").onchange = e => { annotator.acceptFile(e.target.files[0]); e.target.value = ""; };
 
