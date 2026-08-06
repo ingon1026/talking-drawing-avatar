@@ -6,6 +6,7 @@
 eyes-open ratio 스케줄을 주입해 구현 (JoyVASA/src/live_portrait_wmg_pipeline.py 참조).
 """
 import inspect
+import random
 import subprocess
 import sys
 import threading
@@ -141,12 +142,21 @@ def make_blink_schedule(n_frames: int, interval_s: float, strength: float):
     # ponytail: 절대 ratio 상수(열림≈0.3 가정) 사용. 그림별로 어색하면 source 랜드마크 기반 보정으로 교체
     closed = 0.3 * (1.0 - strength)
     edge = min(closed + 0.12, 0.3)
-    env = (edge, closed, closed, edge)  # 4프레임 = 160ms @25fps
+    # 4프레임 = 160ms @25fps. 실시간(avatar_core makeBlink)은 140ms 연속 곡선인데 여기선
+    # 못 맞춘다 — 25fps 에서 140ms 는 3.5프레임이고 주입은 프레임 단위다. 곡선 모양도 안 맞춘다:
+    # 실시간의 연속화는 소비 측 blink>0.5 이진 분기 때문이었고 여기엔 그 분기가 없다.
+    env = (edge, closed, closed, edge)
     sched = [None] * n_frames
     step = max(int(interval_s * FPS), len(env) + 2)
-    for start in range(step, n_frames - len(env), step):
+    # 간격을 흔든다 — 정확히 등간격이면 메트로놈처럼 보인다. 폭은 실시간과 같은 ±30%.
+    # 시드 고정: 영상마다 같은 패턴이어도 한 영상 안에서 흔들리면 목적은 달성되고,
+    # 대신 self-check 와 재현이 살아 있다(같은 입력 → 같은 스케줄).
+    rng = random.Random(0)
+    start = step
+    while start + len(env) < n_frames:
         for off, v in enumerate(env):
             sched[start + off] = v
+        start += max(len(env) + 2, int(step * (0.7 + rng.random() * 0.6)))
     return sched
 
 
@@ -454,6 +464,12 @@ if __name__ == "__main__":
     assert make_blink_schedule(100, 2.0, 0) is None      # 강도 0 = 주입 없음
     half = make_blink_schedule(100, 2.0, 0.5)
     assert abs(half[51] - 0.15) < 1e-9                   # 강도 0.5 = 반감김
+    # 간격이 흔들린다 — 등간격으로 되돌아가면(메트로놈) 여기서 걸린다.
+    long = make_blink_schedule(300, 2.0, 1.0)
+    starts = [i for i, v in enumerate(long) if v is not None and long[i - 1] is None]
+    gaps = {b - a for a, b in zip(starts, starts[1:])}
+    assert len(gaps) > 1, f"깜빡임 간격이 등간격이다: {gaps}"
+    assert all(0.7 * 50 <= g <= 1.3 * 50 for g in gaps), gaps   # step=50 의 ±30%
     print("blink schedule self-check OK")
 
     # 표정 크기 (GPU 불필요). 아래 스케줄 검증은 양변이 같은 함수를 지나서 표의 절대

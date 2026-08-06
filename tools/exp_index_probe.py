@@ -15,6 +15,14 @@ JoyVASA 는 이 벡터의 의미를 문서화하지 않았고 소스 주석에 �
   * **숫자로 끝내지 말고 렌더를 눈으로 본다.** 눈썹 부호를 반대로 적은 적이 있다
     (앞머리가 눈썹을 가리는 그림이라 얼굴 이동을 눈썹으로 봤다). 눈썹을 볼 거면
     이마가 드러난 그림을 쓸 것 — JoyVASA/assets/examples/imgs/joyvasa_005.png 등.
+  * 단일 인덱스로 안 나오는 표정이 있다. 눈 뜨기가 그랬다 — 11 은 혼자 주면 얼굴을
+    통째로 끌고 가고(국소도 0.21), 13/16 만으로는 약하다. `--terms` 로 조합을 준다:
+
+        --terms 11,1,-0.010 13,1,0.003 15,1,-0.010 16,1,0.003   # 눈 크게(양쪽)
+
+    부호를 뒤집으면 실눈이다. 눈은 좌우가 각각 두 인덱스로 움직이고 **둘의 부호가 서로
+    반대다** — 화면 왼눈 = 11,1 음수 / 13,1 양수, 화면 오른눈 = 15,1 음수 / 16,1 양수.
+    ("11 과 13 이 같은 부호"로 적으면 그게 다음 사람의 세 번째 부호 오류가 된다.)
 """
 import argparse
 import sys
@@ -29,13 +37,14 @@ sys.path.insert(0, str(ROOT))
 LIP_IDX = [6, 12, 14, 17, 19, 20]   # 소스 코드에 명시된 입술 인덱스
 
 
-def _first_frame(mp4: Path):
+def _first_frame(mp4: Path, keep: Path = None):
     import subprocess
-    png = mp4.with_suffix(".probe.png")
+    png = keep or mp4.with_suffix(".probe.png")
     subprocess.run(["ffmpeg", "-y", "-i", str(mp4), "-vframes", "1", "-vf", "scale=512:512",
                     str(png)], check=True, capture_output=True)
     a = Image.open(png).convert("L")
-    png.unlink(missing_ok=True)
+    if keep is None:
+        png.unlink(missing_ok=True)
     return a
 
 
@@ -75,6 +84,9 @@ def main():
     ap.add_argument("--axis", type=int, default=1, help="0=x 1=y 2=z")
     ap.add_argument("--mouth-roi", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"),
                     default=MOUTH_ROI, help="입 ROI(512 프레임 기준) — 그림마다 다르다")
+    ap.add_argument("--terms", nargs="*", metavar="IDX,AXIS,COEF",
+                    help="단일 인덱스 대신 조합 하나를 검사한다 (docstring 참조)")
+    ap.add_argument("--save", help="렌더 프레임을 이 디렉터리에 PNG 로 남긴다 — 눈으로 볼 것")
     a = ap.parse_args()
     sys.argv = sys.argv[:1]   # JoyVASA ArgumentConfig 가 argv 를 다시 파싱한다
 
@@ -90,7 +102,16 @@ def main():
     from pipeline import AvatarPipeline  # noqa: E402
 
     pipe = AvatarPipeline()
-    base = np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, None)), dtype=np.int16)
+    save = Path(a.save) if a.save else None
+    if save:
+        save.mkdir(parents=True, exist_ok=True)
+
+    def shot(label, delta):
+        mp4 = _gen(pipe, a.image, wav, out_dir, delta)
+        return np.asarray(_first_frame(mp4, save / f"{label}.png" if save else None),
+                          dtype=np.int16)
+
+    base = shot("base", None)
     idxs = a.idx if a.idx else list(range(21))
     print(f"축={a.axis} 진폭={a.amp}  (입술 인덱스 {LIP_IDX} 는 소스에 명시됨)")
     print(f"{'idx':>4} {'눈썹':>7} {'눈':>7} {'입':>7}  {'국소':>5} {'입L':>5} {'입R':>5}  판정")
@@ -108,11 +129,20 @@ def main():
         print(f"{label:>4} {b[0]:>7} {b[1]:>7} {b[2]:>7}   {loc:.2f} {lo:>5} {ro:>5}  {tag}")
 
     # 노이즈 바닥 — 델타 없이 한 번 더 렌더한 차분. 이 값보다 작은 변화는 의미 없다.
-    row("null", np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, None)), dtype=np.int16))
+    row("null", shot("null", None))
+
+    if a.terms:
+        d = np.zeros((21, 3), dtype=np.float32)
+        for t in a.terms:
+            i, ax, c = t.split(",")
+            d[int(i), int(ax)] += float(c)
+        row("조합", shot("terms", d))
+        return
+
     for i in idxs:
         d = np.zeros((21, 3), dtype=np.float32)
         d[i, a.axis] = a.amp
-        row(str(i), np.asarray(_first_frame(_gen(pipe, a.image, wav, out_dir, d)), dtype=np.int16))
+        row(str(i), shot(str(i), d))
 
 
 def _gen(pipe, img, wav, out_dir, delta):

@@ -633,23 +633,27 @@ requestAnimationFrame(render);
 const PROSODY_TABLE = Object.fromEntries(
   Object.keys(AvatarCore.EMOTIONS).map(k => [k, AvatarCore.voiceProsody(k, 1)]));
 
+// 발화에 걸 감정 — **두 경로가 같은 규칙을 써야 한다.** 예전엔 정반대였다: 영상은 수동 버튼이
+// 이기는데 실시간은 감정 자동이 켜져 있으면 버튼을 무시하고 재분류했다(같은 버튼, 다른 결과).
+// 명시 감정(대화 모드 LLM·클릭 반응)이 없으면 수동 버튼 상태를 이어받는다.
+// emo.current() 를 읽으면 안 된다 — 서버 판정 결과를 2D 상태에 심기 때문에, 그걸 사용자
+// 의사로 오인해 다음 발화부터 auto_emo 가 영영 꺼진다(자동 감정이 스스로 꺼지던 원인).
+// 버튼 세기는 makeEmotion 과 같게 항상 1 — current().level 처럼 감쇠에 끌려가지 않는다.
+// sticky: 버튼은 사용자가 고정한 표정이라 유지하고, 명시 감정은 발화 뒤 중립으로 돌아간다.
+function emoSeg(emotion) {
+  return emotion ? { emo: emotion, intensity: 0.9, sticky: false }
+       : manualEmo ? { emo: manualEmo, intensity: 1, sticky: true } : null;
+}
+
 async function speakVideo(text, emotion) {
-  // 명시 감정(대화 모드 LLM·클릭 반응)이 없으면 수동 버튼 상태를 이어받는다(영상에서도 버튼이 먹게).
-  // emo.current() 를 읽으면 안 된다 — 아래에서 서버 판정 결과를 2D 상태에 심기 때문에, 그걸
-  // 사용자 의사로 오인해 다음 발화부터 auto_emo 가 영영 꺼진다(자동 감정이 스스로 꺼지던 원인).
-  // 버튼 세기는 makeEmotion 과 같게 항상 1 — current().level 처럼 감쇠에 끌려가지 않는다.
-  const seg = emotion ? { emo: emotion, intensity: 0.9 }
-            : manualEmo ? { emo: manualEmo, intensity: 1 } : null;
+  const seg = emoSeg(emotion);
   // 감정을 모르면 **여기서 판정하지 않는다.** 예전엔 /api/emotion 을 먼저 치고 그 결과로
   // 프로소디를 정해 /api/speak 을 불렀는데, 판정(≈0.39s)이 TTS(≈0.56s) 앞에 통째로
   // 직렬로 붙었다. 서버가 판정과 TTS 를 동시에 돌리고 톤은 사후에 입힌다.
   const auto = !seg && $("autoEmo").checked;
   // 보낸 감정을 2D 상태에도 그대로 건다 — 버튼 클릭과 전송 사이에 클릭 반응 등이 emo 를
   // 덮어썼을 수 있어서, 보내는 감정과 보이는 표정을 여기서 다시 맞춘다.
-  // sticky: 명시 감정은 실시간과 같게 false — 자동 감정은 발화가 끝나면 중립으로 돌아가야 하고,
-  // true 로 두면 hold 가 영구 1 이 되어 followTrack 이 죽는다. 반대로 수동 버튼 세그는 true 로
-  // 되건다 — 버튼이 이미 그렇게 걸어둔 상태라, false 로 다시 걸면 사용자가 고정한 표정이 풀린다.
-  if (seg) emo.setEmotion(seg.emo, seg.intensity, !emotion);
+  if (seg) emo.setEmotion(seg.emo, seg.intensity, seg.sticky);
   const pr = seg ? AvatarCore.voiceProsody(seg.emo, seg.intensity) : {};
   setStatus("영상 준비 중…");
   $("saveVid").hidden = true;
@@ -682,6 +686,10 @@ async function speakVideo(text, emotion) {
       // 서버가 실제로 판정한 경우(auto)에만 — 수동 버튼·명시 감정이면 위에서 이미 걸어놨고,
       // 여기서 다시 걸면 사용자가 고정한(sticky) 표정이 풀린다.
       // 이 줄이 심는 감정은 manualEmo 를 건드리지 않는다 — 그게 다음 발화의 판정을 막던 고리다.
+      // 판정이 실패하면 서버는 중립으로 정상 완성한다 — 화면엔 아무 표시가 없어서
+      // "자동을 켰는데 표정도 목소리 톤도 안 나온다" 의 원인을 알 수가 없었다.
+      // 자세한 예외는 서버 로그에 있다(app.run_video_job).
+      if (j.emotion_error) setStatus("감정 판정에 실패해 중립으로 만들었습니다.");
       if (auto && j.emotion && j.emotion !== "neutral") {
         emo.setEmotion(j.emotion, 0.9, false);
         syncEmoButtons();   // setEmotion 이 켜 놓은 버튼을 되돌린다 — 수동 고정이 아니다
@@ -702,13 +710,17 @@ async function speakVideo(text, emotion) {
   throw new Error("영상 생성 시간 초과");
 }
 
-const speak = (text, emotion) => hasVideo()
-  ? speakVideo(text, emotion)
-  : AvatarCore.speakWithEmotion({
-      text, emotion, autoEmo: $("autoEmo").checked, emo,
-      voice: $("voice").value, engine: $("engine").value,
-      audioEl: audio, onAnim: a => { anim = a; },
-    });
+const speak = (text, emotion) => {
+  if (hasVideo()) return speakVideo(text, emotion);
+  const seg = emoSeg(emotion);
+  return AvatarCore.speakWithEmotion({
+    text, emotion: seg && seg.emo, intensity: seg ? seg.intensity : 0.9,
+    sticky: !!(seg && seg.sticky),
+    autoEmo: $("autoEmo").checked, emo,
+    voice: $("voice").value, engine: $("engine").value,
+    audioEl: audio, onAnim: a => { anim = a; },
+  });
+};
 
 // ---------- 대화 모드 (마이크/입력 → LLM → 아바타 응답; 코어가 소유) ----------
 const chatCtl = AvatarCore.makeChat({

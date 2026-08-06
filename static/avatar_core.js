@@ -698,9 +698,12 @@ window.AvatarCore = (() => {
   // ---------- 감정 결정 + 발화 (puppet·studio3d 공용) ----------
   // emotion 지정(LLM 판단) 있으면 그대로, 없으면 LLM 분류 → 실패 시 규칙 추론. autoEmo(호출 시점 boolean) 켜져 있으면
   // emo(makeEmotion 인스턴스) 프리셋 + 목소리 톤 적용 후 speakFlow. voice/engine 은 호출 시점 값.
-  async function speakWithEmotion({ text, emotion, autoEmo, emo, voice, engine, audioEl, onAnim }) {
+  // intensity/sticky 는 emotion 이 있을 때만 쓴다 — 호출부가 수동 버튼(1·고정)과 명시 감정
+  // (0.9·감쇠)을 구분해 넘긴다. 영상 경로(puppet speakVideo)와 같은 규칙이어야 한다.
+  async function speakWithEmotion({ text, emotion, intensity = 0.9, sticky = false,
+                                    autoEmo, emo, voice, engine, audioEl, onAnim }) {
     let segs = null;
-    let r = emotion ? { emo: emotion, intensity: 0.9 } : null;
+    let r = emotion ? { emo: emotion, intensity } : null;
     if (!r && autoEmo) {
       // 직렬 호출: 목소리 톤(prosody)이 TTS 요청 파라미터라 감정을 먼저 알아야 한다.
       segs = await classifyEmotion(text);
@@ -712,7 +715,8 @@ window.AvatarCore = (() => {
     // 명시 감정(대화 모드 LLM·클릭 반응)은 autoEmo 와 무관하게 적용한다 — 예전엔 autoEmo 가
     // 꺼져 있으면 넘어온 emotion 까지 무시돼 표정·목소리 톤이 둘 다 사라졌다.
     if (r && (autoEmo || emotion)) {
-      emo.setEmotion(r.emo, r.intensity, false);   // 자동 감정 — 발화 끝나면 중립 복귀
+      // 자동 판정은 발화가 끝나면 중립 복귀(sticky=false). 수동 버튼만 고정으로 넘어온다.
+      emo.setEmotion(r.emo, r.intensity, sticky);
       prosody = voiceProsody(r.emo, r.intensity);
     }
     const anim = await speakFlow({ text, voice, engine, audioEl, onAnim, prosody });

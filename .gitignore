@@ -21,3 +21,4 @@ static/assets3d/
 # 지우게 했다(같은 그림이 두 벌 쌓여 85MB 였다). 이 파일이 사라지면 그 캐릭터는 영상 경로를
 # 영영 못 쓴다 — 스프라이트는 base.png 로 남지만 원본은 재생성이 불가능하다.
 assets_characters/*/source.png
+tests/e2e/_tmp/
