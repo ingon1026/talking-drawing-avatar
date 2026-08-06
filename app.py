@@ -21,7 +21,8 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from pipeline import AvatarPipeline, can_animate
+from pipeline import (PATCH_MARKERS, STREAM_MARKER, AvatarPipeline, can_animate,
+                      execute_source as pipeline_execute_source)
 
 ROOT = Path(__file__).parent
 OUT = ROOT / "output"
@@ -727,14 +728,11 @@ def _joyvasa_ready() -> bool:
     jv = ROOT / "JoyVASA"
     if not all((jv / "pretrained_weights" / p).exists() for p in _JOYVASA_WEIGHTS):
         return False
-    try:
-        src = (jv / "src" / "live_portrait_wmg_pipeline.py").read_text()
-    except OSError:
-        return False
-    # pipeline._load 가 이 세 마커로 RuntimeError 를 낸다. 목록이 갈라지면 "라디오는
-    # 열렸는데 누르면 500" 이 그대로 돌아온다 — 고칠 땐 양쪽을 같이 고칠 것.
-    # images2video 는 21행 import 가 항상 걸리므로 호출 형태로 봐야 판별이 된다.
-    return all(m in src for m in ("exp_delta_schedule", "eye_ratio_schedule", "images2video("))
+    # 마커도 범위(execute 메서드)도 pipeline 에서 가져온다. 예전엔 여기서 목록을 손으로
+    # 들고 파일 전체를 봤는데, _load 는 execute 만 본다 — 마커가 execute 밖에만 있으면
+    # 여기선 통과하고 렌더에서 500 이 난다. 갈라질 수 있는 것은 갈라진다.
+    src = pipeline_execute_source()
+    return bool(src) and all(m in src for m in (*PATCH_MARKERS, STREAM_MARKER))
 
 
 @app.get("/api/health")

@@ -20,6 +20,34 @@ sys.path.insert(0, str(JOYVASA))
 
 FPS = 25  # JoyVASA inference_config output_fps 기본값
 
+# 상류 execute 에 우리 패치·몽키패치가 걸려 있는지 판별하는 문자열.
+# **두 곳이 쓴다** — _load() 가 렌더 직전에(정확), app._joyvasa_ready() 가 /api/health 에서
+# (모델 로드 없이). 예전엔 app 이 목록을 손으로 베껴 들고 있었고 검사 범위도 달랐다
+# (파일 전체 vs execute 메서드). 갈라지면 증상은 "라디오는 열렸는데 누르면 500" 이다.
+PATCH_MARKERS = ("exp_delta_schedule", "eye_ratio_schedule")   # 표정·깜빡임 주입 지점
+STREAM_MARKER = "images2video"    # 스트리밍 인코더가 무력화할 일괄 인코딩 호출
+
+
+def execute_source() -> str:
+    """상류 LivePortraitPipeline.execute 의 소스 텍스트. 빈 문자열이면 못 찾은 것.
+
+    _load() 는 inspect.getsource 를 쓰지만 그건 JoyVASA 모듈이 import 된 뒤에만 된다.
+    /api/health 는 페이지 로드마다 불려서 그 비용을 낼 수 없어 파일에서 직접 뜬다.
+    **범위를 execute 로 좁히는 게 핵심이다** — 파일 전체를 보면 상단 import 줄의
+    images2video 가 항상 걸려서, 몽키패치 대상이 사라져도 통과한다.
+
+    끝 경계에 `\\n\\S`(들여쓰기 없는 줄)가 필요하다. execute 는 현재 클래스의 **마지막
+    메서드**라 `\\n    def ` 로만 끊으면 파일 끝까지 삼킨다 — 상류가 뒤에 모듈 레벨 코드나
+    주석을 붙이면 거기 있는 마커가 execute 안에 있는 것처럼 읽힌다(실측으로 걸렸다).
+    """
+    import re
+    try:
+        src = (JOYVASA / "src" / "live_portrait_wmg_pipeline.py").read_text()
+    except OSError:
+        return ""
+    m = re.search(r"\n    def execute\(.*?(?=\n    def |\n\S|\Z)", src, re.S)
+    return m.group(0) if m else ""
+
 # 감정 → LivePortrait 표정 벡터(exp 21×3) 델타.
 #
 # 인덱스 의미가 업스트림에 문서화돼 있지 않아 tools/exp_index_probe.py 로 실측했다.
@@ -89,9 +117,14 @@ EYE_WIDE_SAFE = 0.030     # 실측 안전 상한(최종 계수 절대값). 표�
 # EMOTIONS 를 고쳤으면 여기도 손으로 고치고 영상을 눈으로 볼 것.
 #
 # 눈 축도 마찬가지다. eyewide 는 surprise 0.8 / fear 0.7 을 그대로 가져왔지만 **비율만**
-# 참고한 것이고 절대 크기는 EYE_WIDE_SCALE 로 따로 잡았다. joy 는 EMOTIONS 에 eyesquint
-# 0.5(눈웃음)가 있는데 여기선 0 이다 — SMILE 이 이미 13,1 / 16,1 에 음수를 넣어 같은 일을
-# 하고 있어서 중복이다(실측: joy 렌더의 흰자 -5 / -21px, 즉 이미 살짝 감긴다).
+# 참고한 것이고 절대 크기는 EYE_WIDE_SCALE 로 따로 잡았다.
+#
+# joy 는 EMOTIONS 에 eyesquint 0.5(눈웃음)가 있는데 여기선 0 이다. 근거는 코드 읽기다 —
+# SMILE 이 이미 13,1 / 16,1 에 음수를 넣고 있어 눈 축의 음수와 같은 자리를 겹쳐 쓴다.
+# **실측으로는 확인하지 못했다**: joy 렌더의 흰자 변화가 -5 / -21px 였는데 프로세스를
+# 새로 띄워 같은 중립을 두 번 렌더한 차이가 -4 / -17px 이라 구분이 안 된다(같은 프로세스
+# 안에서는 ±4px 인데 프로세스 간에는 이만큼 벌어진다 — 노이즈 바닥을 인용할 때 주의).
+# joy 에 눈웃음을 넣을지는 열려 있고, 넣는다면 11·15 항이 새로 붙으므로 렌더로 판정할 것.
 EMOTION_FACE = {
     "neutral":  (0.0,  0.0, 0.0),
     "joy":      (0.0,  0.5, 0.0),    # EMOTIONS.joy 는 brow 채널이 없고 mouthsmile 0.55
@@ -348,7 +381,7 @@ class AvatarPipeline:
         # 표정과 깜빡임만 조용히 죽고 영상은 정상으로 보인다. 그 상태로 인덱스를 측정하면
         # "어떤 인덱스도 효과 없음" 이라는 거짓 결론까지 나온다.
         _src = inspect.getsource(LivePortraitPipeline.execute)
-        _missing = [m for m in ("exp_delta_schedule", "eye_ratio_schedule") if m not in _src]
+        _missing = [m for m in PATCH_MARKERS if m not in _src]
         if _missing:
             raise RuntimeError(
                 f"JoyVASA 패치가 적용돼 있지 않습니다 (누락: {', '.join(_missing)}). "
@@ -357,7 +390,7 @@ class AvatarPipeline:
         # 없애거나 이름을 바꾸면 몽키패치가 조용히 헛돌고 — 증상은 "왜 느리지" + output/ 에
         # 임시 mp4 누적뿐이다. (모듈 전역이 아니라 `video.images2video` 같은 속성 접근으로
         # 바뀌는 경우까지는 이 문자열 검사로 못 잡는다.)
-        if "images2video" not in _src:
+        if STREAM_MARKER not in _src:
             raise RuntimeError(
                 "상류 execute 에 images2video 호출이 없습니다 — 스트리밍 인코더의 "
                 "일괄 인코딩 무력화(P.images2video 몽키패치)가 헛돕니다. pipeline.py 의 "
