@@ -177,14 +177,20 @@ async function loadCharacter(id) {
   // 입을 그릴 방법이 하나도 없는 조합을 로드 때 한 번 알린다. 세 갈래를 구분해서 찍는다 —
   // 폴백이 opt-in(mouthErased) 이라 **키가 없으면 조용히 정지 입이 된다.** 그게 이 게이트의
   // 대가이고, 빌더가 키를 항상 뱉는다는 전제 위에서만 안전하다. 전제가 깨진 걸 여기서 잡는다.
-  if (!manifest.proceduralMouth && !loaded.mouth_lips && !spriteMouth) {
+  //
+  // 조건은 아래 렌더 게이트와 **같은 규칙**이어야 한다. 예전엔 `!proceduralMouth` 로 걸어서
+  // u_4e6992(선언 true + 실측 false)가 세 갈래 어디에도 안 걸렸다 — 이중 입인데 경고도
+  // 안 뜨는 상태였고, 그래서 진단에서도 10번째 캐릭터만 조용히 빠졌다.
+  // (mouthErased 가 true 면 아래 게이트가 벡터 입을 그리므로 여기 들어오지 않는다 —
+  //  남는 건 "false 라 못 그린다" 와 "키가 없어 못 그린다" 둘뿐이다.)
+  if (!(manifest.mouthErased ?? manifest.proceduralMouth) && !loaded.mouth_lips && !spriteMouth) {
     if (manifest.mouthErased === undefined)
       console.error(`[puppet] ${id}: manifest 에 mouthErased 가 없어 입이 정지합니다 — `
         + "빌더가 이 키를 안 썼거나 마이그레이션이 안 됐습니다. "
-        + "tools/ 의 마이그레이션 도구를 돌리세요.");
-    else if (manifest.mouthErased) console.warn(`[puppet] ${id}: 입 스프라이트가 없어 벡터 입으로 대체합니다.`);
-    else console.info(`[puppet] ${id}: base 에 원본 입이 남아 있어 립싱크 없이 워프 턱만 움직입니다.`
-      + " (빌더의 _ink_mask 가 연한 입술을 못 잡아 생긴 상태 — 고장은 아니지만 최종 상태도 아니다)");
+        + "PYTHONPATH= .venv/bin/python tools/fix_mouth_assets.py --apply");
+    else
+      console.info(`[puppet] ${id}: base 에 원본 입이 남아 있어 립싱크 없이 워프 턱만 움직입니다.`
+        + " (빌더의 _ink_mask 가 연한 입술을 못 잡아 생긴 상태 — 고장은 아니지만 최종 상태도 아니다)");
   }
   warp.setCharacter();  // 워프 준비됐으면 새 base 텍스처·커널 중심 반영 (준비 전이면 no-op, init이 이어받음)
 }
@@ -559,15 +565,18 @@ function render(now) {
       mouthDrawn = true;
     }
   }
-  // 안전망: 세 갈래가 전부 빠져나가면 오류도 경고도 없이 입만 정지한다. 벡터 입은 파츠가
-  // 필요 없는 유일한 경로라 여기로 떨어뜨리면 입이 굳지 않는다. 경고는 로드 때 한 번만.
+  // 벡터 입을 그릴지 — 규칙은 한 줄로 읽힌다: **실측이 있으면 실측을, 없으면 선언을 믿는다.**
+  //   mouthErased = 빌더가 base 에서 입을 실제로 지웠나 (실측)
+  //   proceduralMouth = 이 캐릭터는 벡터 입을 쓴다는 선언 (옛 캐릭터엔 이것만 있다)
   //
-  // **다만 base 에 원본 입이 남아 있는 캐릭터에는 그리면 안 된다 — 입이 두 개가 된다.**
-  // 빌더가 입술을 못 지운 캐릭터가 9개 있다(연한 살구·분홍 입술이 _ink_mask 의 r+g+b<300
-  // 문턱을 안 넘어 마스크가 통째로 비었다). 그 캐릭터들은 원본 입을 워프 턱이 늘이는 게
-  // 설계다. manifest.mouthErased 가 그걸 구분한다 — 키가 없는 옛 캐릭터는 안 그리는 쪽이
-  // 안전하다(자산이 없으면 입이 정지할 뿐이지만, 잘못 그리면 입이 겹쳐 보인다).
-  if (!mouthDrawn && (manifest.proceduralMouth || manifest.mouthErased))
+  // base 에 원본 입이 남아 있는데 벡터 입을 얹으면 **입이 두 개**가 된다. 그런 캐릭터가
+  // 10개 있다 — 연한 살구·분홍 입술이 _ink_mask 의 r+g+b<300 문턱을 안 넘어 마스크가
+  // 통째로 비었다. 그 캐릭터들은 원본 입을 워프 턱이 늘이는 게 설계다.
+  //
+  // `||` 가 아니라 `??` 인 이유: u_4e6992 는 선언은 procedural(true) 인데 실측은 안 지워짐
+  // (false) 이다 — 과거 빌더가 만든 모순 쌍이고, `||` 면 선언이 이겨 이중 입이 그대로 남는다.
+  // 실측이 선언을 이겨야 한다. 키가 아예 없는 캐릭터만 선언으로 폴백한다.
+  if (!mouthDrawn && (manifest.mouthErased ?? manifest.proceduralMouth))
     AvatarCore.drawVectorMouth(ctx, W, manifest, jawDy);                    // 근육 채널 직접 구동 (기본)
 }
 requestAnimationFrame(render);

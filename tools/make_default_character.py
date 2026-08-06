@@ -39,6 +39,9 @@ MANIFEST = {
     "jawDrop": 9,      # JawOpen에 따른 입 전체 하강 px
     "mouthCenter": [256, 336],  # 입 기준점
     "proceduralMouth": True,    # True = 근육 채널로 입 윤곽을 직접 그림 (mouth_*.png 무시)
+    # 코드로 그린 캐릭터라 base 에 입 자체가 없다 = 지운 것과 같다.
+    # 이 키가 없으면 렌더가 벡터 입을 못 그려 입이 정지한다(로더가 console.error).
+    "mouthErased": True,
     "mouthStyle": {"line": LINE, "fill": MOUTH_IN, "tongue": TONGUE, "teeth": "#ffffff", "width": 30},
 }
 

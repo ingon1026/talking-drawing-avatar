@@ -31,6 +31,9 @@ MANIFEST = {
     "jawDrop": 9,
     "mouthCenter": [256, 336],
     "proceduralMouth": True,
+    # 코드로 그린 캐릭터라 base 에 입 자체가 없다 = 지운 것과 같다.
+    # 이 키가 없으면 렌더가 벡터 입을 못 그려 입이 정지한다(로더가 console.error).
+    "mouthErased": True,
     "mouthStyle": {"line": LINE, "fill": MOUTH_IN, "tongue": TONGUE, "teeth": "#ffffff", "width": 30},
 }
 
