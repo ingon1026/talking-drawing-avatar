@@ -736,8 +736,9 @@ const speak = (text, emotion) => {
   if (hasVideo()) return speakVideo(text, emotion);
   const seg = emoSeg(emotion);
   return AvatarCore.speakWithEmotion({
-    text, emotion: seg && seg.emo, intensity: seg ? seg.intensity : 0.9,
-    sticky: !!(seg && seg.sticky),
+    // 감정이 없으면 세 키를 아예 안 넘긴다 — speakWithEmotion 의 기본값(0.9 / sticky
+    // false)이 그대로 먹는다. 손으로 기본값을 되풀이하면 한쪽만 고쳐질 자리가 는다.
+    text, ...(seg && { emotion: seg.emo, intensity: seg.intensity, sticky: seg.sticky }),
     autoEmo: $("autoEmo").checked, emo,
     voice: $("voice").value, engine: $("engine").value,
     audioEl: audio, onAnim: a => { anim = a; },

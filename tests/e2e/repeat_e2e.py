@@ -18,7 +18,6 @@ from playwright.sync_api import sync_playwright
 from _harness import ROOT, TMP, Checks, open_puppet   # noqa: E402 — sys.path 삽입을 겸한다
 
 OUT = ROOT / "output"
-S = TMP
 chk = Checks()
 
 
@@ -48,7 +47,7 @@ def brow_band(mp4, frac):
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(mp4)],
         capture_output=True, text=True).stdout or 0)
     n = max(1, int(dur * 25 * frac))
-    p = S / "rep_frame.png"
+    p = TMP / "rep_frame.png"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp4),
                     "-vf", f"select=eq(n\\,{n}),scale=384:384", "-vframes", "1", str(p)], check=True)
     return np.asarray(Image.open(p).convert("L"), dtype=float)
