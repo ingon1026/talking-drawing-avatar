@@ -4,6 +4,7 @@
 """
 import asyncio
 import base64
+import functools
 import json
 import queue
 import re
@@ -77,8 +78,6 @@ class SpeakRtReq(BaseModel):
     rate: float = 0.0
     pitch: float = 0.0
     volume: float = 0.0
-    emotion: str | None = None      # 표정(눈썹)용 감정 라벨
-    intensity: float = 1.0
 
 
 MULTI_VOICE = "ko-KR-HyunsuMultilingualNeural"  # 영어/한영혼합용 — 한국어전용 음성은 영어를 뭉갬
@@ -424,7 +423,10 @@ def worker():
 
 def warmup():
     """기동 직후 경량 발화 엔진만 미리 로드 — 재시작 후 첫 발화 3.9s(neurosync)/2.4s(a2f) 제거.
-    JoyVASA(영상, 콜드 26s+)는 제외: 영상 안 쓰는 세션까지 매 재기동마다 GPU를 태우게 된다."""
+
+    JoyVASA(영상)는 제외한다. 콜드는 TRT 교체 후 8.0s 로 줄었지만(devlog 2026-08-05,
+    21.4s → 8.0s) 제외 근거는 그 대기시간이 아니라 **재기동마다 영상 안 쓰는 세션까지
+    모델을 GPU 에 상주시킨다**는 것이다 — 8.0s 라고 근거가 약해지지 않는다."""
     import wave
     w = OUT / "warmup.wav"
     with wave.open(str(w), "w") as f:
@@ -627,7 +629,21 @@ def characters():
                             "deletable": bool(mf.get("deletable", False)),
                             # 영상 경로를 쓸 수 있는지 — 스프라이트 워프로는 입이 실제로
                             # 벌어지지 않는다(구강 픽셀이 원본에 없다).
-                            "video": _char_video_ok(d)})
+                            "video": _char_video_ok(d),
+                            # 이 캐릭터에 실제로 있는 png. 렌더가 없는 파츠까지 무조건
+                            # 요청해 전환마다 404 가 62건씩 났다(404 는 캐시가 안 된다).
+                            #
+                            # manifest 에 적지 않고 **디스크를 훑는다.** 적어 두면
+                            # build_character 뒤에 스프라이트를 더 넣는 경로
+                            # (tools/extract_mouth_sprites.py 등)에서 목록이 짧게 낡고,
+                            # 그때 증상은 404 가 아니라 "파일은 있는데 안 그린다" 다 —
+                            # 전 캐릭터가 mouthErased:true 라 렌더의 입 경고도 안 뜬다.
+                            # video 키와 달리 낡음이 "키 없음" 이 아니라 "짧은 값" 으로
+                            # 나타나서 폴백이 못 잡는다.
+                            #
+                            # preview·source 도 섞여 나가지만 렌더가 PART_FILES 와
+                            # 교집합을 내므로 무해하다.
+                            "parts": sorted(p.stem for p in d.glob("*.png"))})
     return out
 
 
@@ -675,13 +691,59 @@ def stream_video(job_id: str):
     return StreamingResponse(tail(), media_type="video/mp4")
 
 
+# 영상 경로가 실제로 쓰는 가중치. JoyVASA/pretrained_weights 기준 상대 경로.
+# 동물 모델(*_animal)은 우리 경로가 안 탄다 — 넣으면 없는데도 영상 불가로 오판한다.
+_JOYVASA_WEIGHTS = (
+    "JoyVASA/motion_generator/motion_generator_hubert_chinese.pt",
+    "JoyVASA/motion_template/motion_template.pkl",
+    "liveportrait/base_models/appearance_feature_extractor.pth",
+    "liveportrait/base_models/motion_extractor.pth",
+    "liveportrait/base_models/spade_generator.pth",
+    "liveportrait/base_models/warping_module.pth",
+    "liveportrait/retargeting_models/stitching_retargeting_module.pth",
+    # 얼굴 검출(can_animate)도 영상 경로의 일부다 — 이게 죽으면 렌더가 멀쩡해도
+    # "영상 되는 캐릭터가 하나도 안 생김" 으로 나타난다.
+    "liveportrait/landmark.onnx",
+    "insightface",
+)
+
+
+@functools.cache
+def _joyvasa_ready() -> bool:
+    """영상(JoyVASA) 경로가 실제로 돌 수 있는가.
+
+    디렉터리 존재만 보던 시절엔 가중치가 없거나 패치가 안 걸려 있어도 true 였다 — 영상
+    라디오가 열리고, 사용자는 눌러 본 뒤에야 실패를 안다.
+
+    /api/health 는 페이지 로드마다 불린다. 그래서 모델을 로드하는 검사(pipeline._load)는
+    쓸 수 없고, 파일 존재와 소스 텍스트만 본다. 판정은 프로세스 수명 동안 한 번만 한다 —
+    가중치를 넣거나 패치를 걸었으면 서버를 다시 띄워야 반영된다.
+
+    오디오 인코더는 일부러 안 본다. 어느 디렉터리를 읽을지가 모션 생성기 체크포인트 안의
+    model_args.audio_model 로 정해지는데(hubert_zh → TencentGameMate:chinese-hubert-base),
+    inference_config 의 기본값은 hubert-base-ls960 이고 이 환경엔 그게 없다. 기본값을
+    보면 영상이 멀쩡한데도 항상 false 가 된다.
+    """
+    jv = ROOT / "JoyVASA"
+    if not all((jv / "pretrained_weights" / p).exists() for p in _JOYVASA_WEIGHTS):
+        return False
+    try:
+        src = (jv / "src" / "live_portrait_wmg_pipeline.py").read_text()
+    except OSError:
+        return False
+    # pipeline._load 가 이 세 마커로 RuntimeError 를 낸다. 목록이 갈라지면 "라디오는
+    # 열렸는데 누르면 500" 이 그대로 돌아온다 — 고칠 땐 양쪽을 같이 고칠 것.
+    # images2video 는 21행 import 가 항상 걸리므로 호출 형태로 봐야 판별이 된다.
+    return all(m in src for m in ("exp_delta_schedule", "eye_ratio_schedule", "images2video("))
+
+
 @app.get("/api/health")
 def health():
     # image 필드는 뺐다 — 서버에 "현재 아바타" 라는 개념이 더 이상 없다. 얼굴은 요청마다
     # char_id 나 image_b64 로 명시된다(예전엔 리포 최상위를 훑어 첫 이미지를 썼고,
     # 테스트 픽스처 test_1.png 가 잡혀 "/" 영상이 전부 돼지였다).
     return {
-        "joyvasa_ready": (ROOT / "JoyVASA").exists(),
+        "joyvasa_ready": _joyvasa_ready(),
         "a2f": (ROOT / "Audio2Face-3D-SDK").exists(),
         "chat": (ROOT / "llm_source.py").exists(),
     }

@@ -173,8 +173,17 @@ async function loadCharacter(id) {
   try {
     manifest = { ...MANIFEST_DEFAULTS, ...(await fetch(`${dir}/manifest.json`).then(r => r.json())) };
   } catch { manifest = { ...MANIFEST_DEFAULTS }; }
+  // 요청할 파츠는 서버가 캐릭터 폴더를 훑어 알려준 목록(charList[].parts)으로 좁힌다.
+  // 예전엔 17종을 무조건 받아서, 파츠가 5장인 캐릭터는 전환할 때마다 404 12건이 났다.
+  // **폴백을 지우지 마라.** 목록을 못 받으면(구버전 서버·응답 실패) 전부 시도해야 한다 —
+  // 좁힌 채로 틀리면 404 가 아니라 "있는 파츠를 안 그린다" 가 되고, 전 캐릭터가
+  // mouthErased:true 라 아래 입 경고에도 안 걸려 조용히 잘못 그린다.
+  const avail = (charList.find(c => c.id === id) || {}).parts;
+  if (!avail) console.info(`[puppet] ${id}: 서버가 파츠 목록(parts)을 안 줘서 17종을 전부 요청합니다`
+    + " — 없는 파츠만큼 404 가 납니다. /api/characters 응답을 확인하세요.");
+  const wanted = avail ? PART_FILES.filter(n => avail.includes(n)) : PART_FILES;
   const loaded = {};
-  await Promise.all(PART_FILES.map(name => new Promise(res => {
+  await Promise.all(wanted.map(name => new Promise(res => {
     const img = new Image();
     img.onload = () => { loaded[name] = img; res(); };
     img.onerror = () => res();  // 없는 파츠는 생략
@@ -350,8 +359,7 @@ async function applyMode() {
   warpToggle.closest("label").style.display = (on3d || onPhoto) ? "none" : "";
   // 에셋은 캐릭터가 실제로 바뀐 경우에만 다시 받는다. 출력 라디오도 applyMode 를 타는데
   // 실시간/영상 선택은 스프라이트 파츠와 무관하다 — 무조건 다시 받으면 클릭마다
-  // manifest 1 + png 최대 17건(있는 파츠가 8장이면 9건은 404, 404 는 캐시가 안 된다)이
-  // 서버까지 가고 워프 텍스처도 512² 재업로드된다.
+  // manifest 1 + 있는 파츠 전부가 서버까지 가고 워프 텍스처도 512² 재업로드된다.
   const id = $("character").value;
   if (on3d) await ensure3D().catch(e => setStatus("3D 로드 실패: " + e.message, true));
   else if (!onPhoto && id !== loadedChar) { loadedChar = id; await loadCharacter(id); }

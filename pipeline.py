@@ -43,7 +43,36 @@ SMILE = ((20, 1, -0.01), (14, 1, -0.02), (17, 1, 0.0065), (17, 2, 0.003),
          (13, 1, -0.00275), (16, 1, -0.00275), (3, 1, -0.0035), (7, 1, -0.0035))
 SMILE_MAX = 0.5   # 아래 표에 **이미 접어 넣었다** — 곱셈 경로가 아니라 표의 상한이다
 
-# 감정별 (눈썹 올림 정도, 미소 정도) — 둘 다 그 축의 **최종 크기**다(intensity 만 더 곱한다).
+# 눈 크게 뜨기는 4항 조합이다. 단일 인덱스로는 안 나온다 — 11 은 혼자 주면 얼굴을 통째로
+# 끌고 가고 13/16 만으로는 약하다. 좌우가 각각 두 인덱스로 움직이고 **둘의 부호가 서로
+# 반대다**(화면 왼눈 = 11 음수 / 13 양수, 오른눈 = 15 음수 / 16 양수). 부호를 통째로
+# 뒤집으면 실눈이 된다 — 그게 부호 검증에 쓴 방법이다.
+#
+# 실측은 사진이 아니라 **대상 손그림**(assets_characters/u_524599, 대형 만화 눈)에서 했다.
+# 512 프레임의 눈 박스에서 홍채 면적과 드러난 흰자 픽셀을 세고, 얼굴 전역 이동을 먼저
+# 추정해 빼고 비교했다(11·15 가 얼굴을 옮기는 함정 때문에 — 실측 결과 이 조합은 전역
+# 이동 0):
+#   노이즈 바닥(시드 고정, 델타 없이 재렌더) 프레임 전체 4~9px, 흰자 지표로는 ±4px
+#   계수 0.020 : 흰자 +63 / +105px, 홍채 +105 / +164px — 뚜렷하게 커진다
+#   계수 -0.020: 흰자 122→22 / 280→85px — 실눈. 부호가 맞다
+#   계수 0.030 : 여기까지 깨끗하다 — **눈 축 단독 기준이다**
+#   계수 0.040 : 홍채 텍스처와 캐치라이트가 뭉개지기 시작
+#   계수 0.060 : 눈이 부풀고 색수차가 생긴다 — 붕괴
+# 눈썹이 같이 걸리면 상한이 더 내려온다: surprise(눈썹 0.75 + 눈 0.028)는 홍채가 이미
+# 뭉개져 보였고 그래서 SCALE 을 0.035 가 아니라 0.025 로 잡았다. 아래 self-check 는 곱만
+# 보므로 SCALE 을 0.035 로 올려도 통과한다 — 통과한다고 괜찮은 게 아니다, 렌더를 볼 것.
+EYE_WIDE = ((11, 1, -1.0), (13, 1, +0.3), (15, 1, -1.0), (16, 1, +0.3))
+EYE_WIDE_SCALE = 0.025    # 표의 최대치 surprise 0.8 → 최종 0.020. 상한 0.030 에 여유를 둔다
+EYE_WIDE_SAFE = 0.030     # 실측 안전 상한(최종 계수 절대값). 표가 이걸 넘으면 self-check 가 잡는다
+
+# **깜빡임과 부분 상쇄된다.** eye_ratio_schedule 의 eyes_delta 는 x_s 에서 따로 계산돼
+# 가산되므로(patches/joyvasa_inject.patch) 눈 축이 눈꺼풀을 반대로 밀어 깜빡임이 얕아진다.
+# 실측(홍채 면적 감소율, 발화 + blink_interval=4.0): 중립 54% → surprise 37%.
+# 눈은 여전히 감기지만 완전히 닫히지는 않는다. 두 스케줄을 서로 알게 만들면 없앨 수 있는데
+# 새 결합이라 여기선 안 했다 — 고칠 거면 blink 프레임에서 눈 축만 0 으로 접는 경로가 된다.
+
+# 감정별 (눈썹 올림 정도, 미소 정도, 눈 크게 뜨기) — 셋 다 그 축의 **최종 크기**다
+# (intensity 만 더 곱한다).
 # 예전엔 미소만 여기서 한 번 더 SMILE_MAX 를 곱했다. 두 축의 단위가 달라져서(눈썹은
 # 최종값, 미소는 "상한의 몇 배") 표를 읽고 크기를 가늠할 수가 없었고, 실시간 경로의
 # emotion[k] = base[k] * intensity (avatar_core.js) 와도 식이 어긋났다. 상한은 표에
@@ -58,14 +87,19 @@ SMILE_MAX = 0.5   # 아래 표에 **이미 접어 넣었다** — 곱셈 경로�
 # 0.75 가 같이 있는데 여기선 outer 를 골랐다. 미소는 비례하지도 않는다(0.55→0.5,
 # 0.3→0.2). 단위도 ARKit 채널이 아니라 LivePortrait exp 축 계수라 렌더를 봐야 검증된다.
 # EMOTIONS 를 고쳤으면 여기도 손으로 고치고 영상을 눈으로 볼 것.
+#
+# 눈 축도 마찬가지다. eyewide 는 surprise 0.8 / fear 0.7 을 그대로 가져왔지만 **비율만**
+# 참고한 것이고 절대 크기는 EYE_WIDE_SCALE 로 따로 잡았다. joy 는 EMOTIONS 에 eyesquint
+# 0.5(눈웃음)가 있는데 여기선 0 이다 — SMILE 이 이미 13,1 / 16,1 에 음수를 넣어 같은 일을
+# 하고 있어서 중복이다(실측: joy 렌더의 흰자 -5 / -21px, 즉 이미 살짝 감긴다).
 EMOTION_FACE = {
-    "neutral":  (0.0,  0.0),
-    "joy":      (0.0,  0.5),    # EMOTIONS.joy 는 brow 채널이 없고 mouthsmile 0.55
-    "sad":      (0.7,  0.0),    # browinnerup 0.7
-    "angry":   (-0.85, 0.0),    # browdown 0.85
-    "surprise": (0.75, 0.0),    # browouterup 0.75
-    "fear":     (0.85, 0.0),    # browinnerup 0.85
-    "shy":      (0.0,  0.2),    # mouthsmile 0.3 — 옅은 미소
+    "neutral":  (0.0,  0.0, 0.0),
+    "joy":      (0.0,  0.5, 0.0),    # EMOTIONS.joy 는 brow 채널이 없고 mouthsmile 0.55
+    "sad":      (0.7,  0.0, 0.0),    # browinnerup 0.7
+    "angry":   (-0.85, 0.0, 0.0),    # browdown 0.85
+    "surprise": (0.75, 0.0, 0.8),    # browouterup 0.75, eyewide 0.8
+    "fear":     (0.85, 0.0, 0.7),    # browinnerup 0.85, eyewide 0.7
+    "shy":      (0.0,  0.2, 0.0),    # mouthsmile 0.3 — 옅은 미소
 }
 
 
@@ -75,10 +109,11 @@ def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
         # 조용히 중립이 되면 증상이 "그 감정만 표정이 안 나옴" 뿐이라 아무도 못 찾는다.
         # EMOTIONS 에 감정을 하나 더한 뒤 여기 안 더하면 바로 이 상태가 된다.
         print(f"[pipeline] EMOTION_FACE 에 없는 감정 '{emo}' — 표정 없이(중립) 진행")
-    brow, smile = EMOTION_FACE.get(emo or "neutral", (0.0, 0.0))
+    brow, smile, eye = EMOTION_FACE.get(emo or "neutral", (0.0, 0.0, 0.0))
     k = max(0.0, min(1.0, intensity))
-    brow, smile = brow * k, smile * k
-    if abs(brow) < 1e-3 and abs(smile) < 1e-3:
+    brow, smile, eye = brow * k, smile * k, eye * k
+    # 축을 하나 더할 때 여기 빼먹으면 그 축만 있는 감정이 조용히 중립이 된다.
+    if abs(brow) < 1e-3 and abs(smile) < 1e-3 and abs(eye) < 1e-3:
         return None
     import numpy as np
     d = np.zeros((21, 3), dtype="float32")
@@ -86,6 +121,8 @@ def emotion_exp_delta(emo: str | None, intensity: float = 1.0):
         d[i, ax] += brow * BROW_SCALE * c
     for i, ax, c in SMILE:
         d[i, ax] += smile * c
+    for i, ax, c in EYE_WIDE:
+        d[i, ax] += eye * EYE_WIDE_SCALE * c
     return d
 
 
@@ -475,7 +512,11 @@ if __name__ == "__main__":
     # 표정 크기 (GPU 불필요). 아래 스케줄 검증은 양변이 같은 함수를 지나서 표의 절대
     # 크기를 못 잡는다 — joy 를 0.05 로 잘못 접어 넣어도 전부 통과한다. 그래서 한 점을 박는다.
     assert abs(emotion_exp_delta("joy", 1.0)[20, 1] + 0.005) < 1e-9   # 상한 접어넣기 전과 동일
-    assert all(abs(s) <= SMILE_MAX for _, s in EMOTION_FACE.values()), "미소가 안전 상한을 넘었다"
+    assert all(abs(s) <= SMILE_MAX for _, s, _ in EMOTION_FACE.values()), "미소가 안전 상한을 넘었다"
+    # 눈 축도 같은 이유로 한 점을 박는다 — 스케줄 검증은 표의 절대 크기를 못 잡는다.
+    assert abs(emotion_exp_delta("surprise", 1.0)[11, 1] + 0.020) < 1e-9   # 0.8 × 0.025
+    assert all(abs(e) * EYE_WIDE_SCALE <= EYE_WIDE_SAFE + 1e-9
+               for _, _, e in EMOTION_FACE.values()), "눈 크게 뜨기가 안전 상한을 넘었다(홍채가 뭉개진다)"
     print("emotion magnitude self-check OK")
 
     # 문장별 표정 스케줄 (GPU 불필요)
