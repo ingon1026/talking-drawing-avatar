@@ -1505,9 +1505,17 @@ window.AvatarCore = (() => {
         addTurn(botName, reply, "bot");
         statusSet("말하는 중…");
         await speak(reply, emotion);
-        // speak 는 재생 시작 시점에 반환 — 연속 대화면 재생이 실제로 끝날 때까지 대기 후 재청취
-        if (handsFree && audioEl && !audioEl.paused && !audioEl.ended)
-          await new Promise(res => audioEl.addEventListener("ended", res, { once: true }));
+        // speak 는 재생 시작 시점에 반환 — 연속 대화면 재생이 실제로 끝날 때까지 대기 후 재청취.
+        // 주입된 audioEl 만 보면 안 된다 — 영상 경로는 오디오가 mp4 안에 있어 <video> 로 나가고
+        // <audio> 는 멈춘 채라 대기가 통째로 스킵됐다(= 영상이 말하는 중에 마이크가 열림).
+        // 그래서 지금 실제로 재생 중인 매체를 찾아 그걸 기다린다. audioEl 우선 — 실시간 경로는 종전과 동일.
+        const playing = [audioEl, ...document.querySelectorAll("audio, video")]
+          .find(el => el && !el.paused && !el.ended);
+        // ended 만 기다리면 영구히 걸린다 — 스트리밍 mp4 는 캐릭터 전환(pause)·스트림 끊김(error)으로도
+        // 끝난다. 그 경우 busy 가 안 풀려 마이크가 영영 안 열린다. 버퍼링 중엔 waiting 이라 안 깨진다.
+        if (handsFree && playing)
+          await new Promise(res => ["ended", "pause", "error"]
+            .forEach(ev => playing.addEventListener(ev, res, { once: true })));
       } finally {
         busy = false;
         if (handsFree && mic) { statusSet(""); mic.start(); }
