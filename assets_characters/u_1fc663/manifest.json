@@ -21,5 +21,6 @@
     "width": 28
   },
   "deletable": true,
-  "video": false
+  "video": false,
+  "mouthErased": true
 }
