@@ -222,11 +222,21 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
     mb = tuple(map(int, (*T(mouth_box[0], mouth_box[1]), *T(mouth_box[2], mouth_box[3]))))
     src_rgba = base.convert("RGBA")
     mask = _fill_skin(base, mb)              # 원래 입 자리를 지우고 그 모양을 받는다
-    # 스프라이트를 **지운 것과 같은 모양**으로 자른다. 사각형으로 자르면 스케일할 때
-    # 상자 안 다른 잉크(입꼬리 그림자·인중)가 같이 움직이고, base 의 지워진 윤곽이 드러난다.
-    lips = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-    lips.paste(src_rgba, (0, 0), mask)
-    lips.save(out / "mouth_lips.png")
+    mouth_erased = bool(mask.getbbox())
+    if mouth_erased:
+        # 스프라이트를 **지운 것과 같은 모양**으로 자른다. 사각형으로 자르면 스케일할 때
+        # 상자 안 다른 잉크(입꼬리 그림자·인중)가 같이 움직이고, base 의 지워진 윤곽이 드러난다.
+        lips = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        lips.paste(src_rgba, (0, 0), mask)
+        lips.save(out / "mouth_lips.png")
+    else:
+        # INK_MAX 는 r+g+b<300(거의 검정) 기준이라 연한 살구·분홍 입술은 잉크로 안 잡힌다.
+        # 그러면 지운 것도 없고 스프라이트도 빈 장이 된다. 빈 장을 저장하면 drawSplitLips 가
+        # 그걸 truthy 로 통과시켜(빈 이미지도 Image 객체다) 입이 오류도 경고도 없이 멎는다 —
+        # 실제로 그렇게 만들어진 캐릭터가 7개 있었다. 저장하지 않고 알린다.
+        # 이 경우 원본 입이 base 에 그대로 남으므로 워프의 턱 변위장이 그 입을 벌린다.
+        print(f"[character_builder] {name}: 입술이 연해(INK_MAX={INK_MAX}) 잉크 마스크가 비었다 "
+              f"— 입을 안 지우고 base 에 남긴다. mouth_lips.png 는 만들지 않는다.")
     base.convert("RGBA").save(out / "base.png")
 
     mcx, mcy = T(*mouth_center)
@@ -240,6 +250,9 @@ def build_character(src_path, out_dir, name, eyes, mouth_box, mouth_center,
         "mouthCenter": [round(mcx), round(mcy)],
         "mouthBox": list(mb),
         "proceduralMouth": False,
+        # 렌더의 입 폴백이 이 값만 본다 — base 에 원본 입이 남아 있는데(false) 벡터 입을
+        # 얹으면 입이 두 개로 겹친다. 빌더는 지웠는지 알고 있으니 여기서 적는다.
+        "mouthErased": mouth_erased,
         "mouthStyle": {**DEFAULT_STYLE, **(mouth_style or {})},
         "deletable": deletable,
     }
